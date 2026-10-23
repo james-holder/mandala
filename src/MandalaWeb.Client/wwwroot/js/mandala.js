@@ -63,8 +63,9 @@ window.mandala = {
         async function drawPage(pdf, svgText) {
             holder.innerHTML = svgText.replace(/^<\?xml[^>]*>/, "");
             const el = holder.querySelector("svg");
-            mandala.enforceMinLine(el, side, 0.35);
-            await pdf.svg(el, { x: (pw - side) / 2, y: (ph - side) / 2, width: side, height: side });
+            const box = mandala.fitBox(el, pw - 2 * margin, ph - 2 * margin);
+            mandala.enforceMinLine(el, box.w, 0.35);
+            await pdf.svg(el, { x: (pw - box.w) / 2, y: (ph - box.h) / 2, width: box.w, height: box.h });
         }
 
         try {
@@ -113,6 +114,14 @@ window.mandala = {
         if (mandala._lastPreview) URL.revokeObjectURL(mandala._lastPreview);
         mandala._lastPreview = URL.createObjectURL(pdf.output("blob"));
         return mandala._lastPreview + "#view=Fit";
+    },
+
+    // The largest size that fits the SVG inside areaW × areaH without changing its shape.
+    // Mandalas are square; traced pictures can be any shape, so a tall picture uses the page's full height.
+    fitBox(svgEl, areaW, areaH) {
+        const vb = svgEl.viewBox && svgEl.viewBox.baseVal;
+        const aspect = vb && vb.width && vb.height ? vb.width / vb.height : 1;
+        return aspect >= areaW / areaH ? { w: areaW, h: areaW / aspect } : { w: areaH * aspect, h: areaH };
     },
 
     // Makes sure no line prints thinner than minLineMm when the SVG is drawn sideMm wide.
@@ -202,11 +211,12 @@ window.mandala = {
                 } else if (page.kind === "belongs") {
                     pdf.addImage(textImage([{ text: "This book belongs to", pt: 24, y: 0.42, underline: true }]), "PNG", 0, 0, W, H, undefined, "FAST");
                 } else if (page.kind === "design") {
-                    const areaW = W - left - right, areaH = H - 2 * topBottom, side = Math.min(areaW, areaH);
+                    const areaW = W - left - right, areaH = H - 2 * topBottom;
                     holder.innerHTML = page.svg.replace(/^<\?xml[^>]*>/, "");
                     const el = holder.querySelector("svg");
-                    mandala.enforceMinLine(el, side, opts.minLineMm);
-                    await pdf.svg(el, { x: left + (areaW - side) / 2, y: topBottom + (areaH - side) / 2, width: side, height: side });
+                    const box = mandala.fitBox(el, areaW, areaH);
+                    mandala.enforceMinLine(el, box.w, opts.minLineMm);
+                    await pdf.svg(el, { x: left + (areaW - box.w) / 2, y: topBottom + (areaH - box.h) / 2, width: box.w, height: box.h });
                 }
             }
             if (opts.preview) return { pages: n, gutterIn, url: mandala.previewUrl(pdf) };

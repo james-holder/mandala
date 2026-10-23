@@ -253,7 +253,7 @@
                     <div class="meta">@design.UpdatedUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</div>
                     <div class="actions">
                         <button @onclick="() => viewing = design.Id" title="See it big and zoom in">🔍</button>
-                        <button @onclick='() => Nav.NavigateTo($"d/{design.Id}")'>Open</button>
+                        <button @onclick="() => OpenDesign(design)">Open</button>
                         <button @onclick="() => Delete(design)">Delete</button>
                     </div>
                 </div>
@@ -271,7 +271,7 @@
                 OnStep="by => viewing = shown[Math.Clamp(vi + by, 0, shown.Count - 1)].Id" OnClose="() => viewing = null" OnSpace="() => Toggle(vd.Id)">
         <Actions>
             <button class="@(chosen ? "accent" : "primary")" @onclick="() => Toggle(vd.Id)">@(chosen ? $"✓ Selected ({order.IndexOf(vd.Id) + 1})" : "Select it")</button>
-            <button @onclick='() => Nav.NavigateTo($"d/{vd.Id}")'>Open</button>
+            <button @onclick="() => OpenDesign(vd)">Open</button>
         </Actions>
     </ZoomViewer>
 }
@@ -561,12 +561,16 @@
     {
         if (!svgCache.TryGetValue(id, out var svg))
         {
-            try { svg = SvgWriter.Export(MandalaDocument.FromJson(await Api.GetJsonAsync(id)), coloringPage: true); }
+            if (designs.FirstOrDefault(d => d.Id == id)?.IsTraced == true)
+                svg = await Api.GetSvgAsync(id); // traced images are stored ready to print
+            else try { svg = SvgWriter.Export(MandalaDocument.FromJson(await Api.GetJsonAsync(id)), coloringPage: true); }
             catch (Exception) { svg = await Api.GetSvgAsync(id); } // fall back to the stored picture
             svgCache[id] = svg;
         }
         return svg;
     }
+
+    private void OpenDesign(DesignSummary d) => Nav.NavigateTo(d.IsTraced ? $"trace/{d.Id}" : $"d/{d.Id}");
 
     private async Task<object> CoverSpec()
     {

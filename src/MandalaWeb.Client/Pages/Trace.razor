@@ -1,0 +1,344 @@
+@page "/trace"
+@page "/trace/{Id:long}"
+@using System.Text.Json
+@implements IDisposable
+@inject DesignApi Api
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>Trace an image · Mandala Maker</PageTitle>
+
+<header class="toolbar">
+    <div class="brand">Mandala Maker</div>
+    <div class="group">
+        <a class="button" href="">← Back to designing</a>
+        <a class="button" href="gallery">🖼 Gallery</a>
+    </div>
+    <div class="group">
+        <button class="primary" @onclick="PickImage">📂 Open image</button>
+    </div>
+    <div class="group">
+        <input class="trace-name" @bind="name" @bind:event="oninput" placeholder="Name" title="Name for the saved design" />
+        @if (Id == null)
+        {
+            <label class="inline">Save into
+                <select @bind="saveFolder">
+                    <option value="0">Unfiled</option>
+                    @foreach (var f in folders) { <option value="@f.Id">📁 @f.Name</option> }
+                </select>
+            </label>
+        }
+        <button class="accent" @onclick="Save" disabled="@(result?.Svg == null || busy)">💾 @(Id == null ? "Save to gallery" : "Save changes")</button>
+        <button @onclick="DownloadSvg" disabled="@(result?.Svg == null)">SVG</button>
+    </div>
+</header>
+
+<div class="trace-layout">
+    <aside class="panel">
+        <h3>Image type</h3>
+        <label>
+            <select value="@s.Mode" @onchange="e => Set(() => s = s with { Mode = e.Value!.ToString()! })">
+                <option value="lines">Line drawing (black lines on white)</option>
+                <option value="outline">Solid shapes → outlines</option>
+                <option value="color">Color clip art → outlines</option>
+            </select>
+        </label>
+        <p class="help">@ModeHelp</p>
+
+        @if (s.Mode != "color")
+        {
+            <label class="check"><input type="checkbox" checked="@(s.Threshold < 0)" @onchange="e => Set(() => s = s with { Threshold = (bool)e.Value! ? -1 : (result?.Threshold ?? 128) })" /> Automatic light/dark split</label>
+            @if (s.Threshold >= 0)
+            {
+                <Num Label="Darkness cutoff" Value="s.Threshold" Min="10" Max="245" Step="1" Changed="v => Set(() => s = s with { Threshold = (int)v })" />
+                <p class="help">Higher keeps lighter grays as lines.</p>
+            }
+            <label class="check"><input type="checkbox" checked="@s.Invert" @onchange="e => Set(() => s = s with { Invert = (bool)e.Value! })" /> Light drawing on a dark background</label>
+        }
+        else
+        {
+            <Num Label="Colors" Value="s.Colors" Min="2" Max="12" Step="1" Changed="v => Set(() => s = s with { Colors = (int)v })" />
+            <p class="help">How many color areas to find. More colors, more lines.</p>
+        }
+
+        @if (s.Mode != "lines")
+        {
+            <Num Label="Line weight (px)" Value="s.Weight" Min="1" Max="14" Step="1" Changed="v => Set(() => s = s with { Weight = (int)v })" />
+            <p class="help">@LineNote(s.Weight)</p>
+        }
+
+        <h3>Clean up</h3>
+        <Num Label="Thicken lines (px)" Value="s.Thicken" Min="0" Max="8" Step="1" Changed="v => Set(() => s = s with { Thicken = (int)v })" />
+        <Num Label="Remove specks (px)" Value="s.Speck" Min="0" Max="30" Step="1" Changed="v => Set(() => s = s with { Speck = v })" />
+        <Num Label="Smoothing" Value="s.Smooth" Min="0.2" Max="6" Step="0.1" Changed="v => Set(() => s = s with { Smooth = v })" />
+        <label>Detail
+            <select value="@s.Detail" @onchange="e => SetDetail(int.Parse(e.Value!.ToString()!))">
+                <option value="900">Low (faster)</option>
+                <option value="1400">Medium</option>
+                <option value="2000">High (slower)</option>
+            </select>
+        </label>
+
+        @if (result != null)
+        {
+            <h3>Check</h3>
+            @if (result.Error != null)
+            {
+                <p class="warn">@result.Error</p>
+            }
+            else
+            {
+                @if (result.Thin > 0.12)
+                {
+                    <p class="warn">About @((int)Math.Round(result.Thin * 100))% of the lines are thinner than KDP's 0.3 mm minimum and may print faint or broken. Turn up <b>Thicken lines</b>.</p>
+                }
+                else
+                {
+                    <p class="ok">✓ Lines are thick enough to print.</p>
+                }
+                @if (result.Ink > 0.45)
+                {
+                    <p class="warn">The page is mostly black. Try <b>Solid shapes → outlines</b>, or a lower darkness cutoff.</p>
+                }
+            }
+        }
+    </aside>
+
+    <main class="trace-main" @ref="dropZone">
+        @if (source == null)
+        {
+            <div class="trace-empty">
+                <h2>Turn clip art into a coloring page</h2>
+                <p>Drop an image here, paste one (Ctrl+V), or use 📂 Open image. Clip art and drawings work best.</p>
+                <button class="primary" @onclick="PickImage">📂 Open image</button>
+                <p class="help">Only trace pictures you have the rights to use: your own drawings, licensed clip art, or public-domain art.</p>
+            </div>
+        }
+        else
+        {
+            <div class="trace-panes">
+                <figure>
+                    <figcaption>Original</figcaption>
+                    <img src="@source" alt="Original image" />
+                </figure>
+                <figure>
+                    <figcaption>Coloring page @(tracing ? "· tracing…" : "") <small>(click to zoom)</small></figcaption>
+                    @if (result?.Svg != null)
+                    {
+                        <img src="@SvgUrl" alt="Traced coloring page" class="@(tracing ? "stale" : "")" @onclick="() => zooming = true" />
+                    }
+                    else if (tracing)
+                    {
+                        <p class="message">Tracing…</p>
+                    }
+                </figure>
+            </div>
+            <p class="message">@message</p>
+        }
+    </main>
+</div>
+
+@if (zooming && result?.Svg != null)
+{
+    <ZoomViewer Src="@SvgUrl" Title="@(string.IsNullOrWhiteSpace(name) ? "Coloring page" : name)" Index="0" Count="1" OnClose="() => zooming = false" />
+}
+
+@code {
+    [Parameter] public long? Id { get; set; }
+
+    /// <summary>Trace settings; these names match what trace.js expects.</summary>
+    private sealed record TraceSettings
+    {
+        public string Mode { get; init; } = "lines";
+        public int Threshold { get; init; } = -1; // -1 = automatic
+        public bool Invert { get; init; }
+        public int Weight { get; init; } = 4;
+        public int Thicken { get; init; }
+        public int Colors { get; init; } = 6;
+        public double Speck { get; init; } = 4;
+        public double Smooth { get; init; } = 1;
+        public int Detail { get; init; } = 1400;
+    }
+
+    /// <summary>What's saved as a traced design's data: the working copy of the image plus the settings, so it can be re-traced later.</summary>
+    private sealed record TracedDoc(string Kind, string SourceName, string Source, TraceSettings Settings);
+
+    private sealed record TraceResult(string? Svg, double Width, double Height, double Ink, int Threshold, double MmPerPixel, double Thin, string? Error);
+    private sealed record Loaded(int Width, int Height, string DataUrl);
+    private sealed record Picked(string Name, string DataUrl);
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    private TraceSettings s = new();
+    private string? original;      // the image as picked, kept so Detail can be changed
+    private string? source;        // the working copy shown and saved
+    private string sourceName = "";
+    private string name = "";
+    private TraceResult? result;
+    private string? svgUrl;
+    private bool tracing, busy, zooming;
+    private int version;
+    private string message = "";
+    private List<FolderSummary> folders = new();
+    private long saveFolder;
+    private ElementReference dropZone;
+    private DotNetObjectReference<Trace>? self;
+
+    private string? SvgUrl => svgUrl;
+
+    private string ModeHelp => s.Mode switch
+    {
+        "outline" => "Filled black areas become outlines you can color inside. Good for silhouettes and bold clip art.",
+        "color" => "Finds the color areas and draws a line wherever two colors meet. Good for colored clip art.",
+        _ => "Dark lines are kept as they are. Good for drawings, sketches and black-and-white line art.",
+    };
+
+    private string LineNote(int px) =>
+        result?.MmPerPixel is double mm and > 0 ? $"About {px * mm:0.0#} mm on a full-page print (KDP needs at least 0.3 mm)." : "Thicker lines are easier to color along.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { folders = await Api.FoldersAsync(); } catch (Exception) { } // saving still works without folders
+        if (Id is long id) await LoadSaved(id);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            self = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("mandalaTrace.watchDrop", dropZone, self);
+        }
+    }
+
+    public void Dispose() => self?.Dispose();
+
+    private async Task LoadSaved(long id)
+    {
+        try
+        {
+            var doc = JsonSerializer.Deserialize<TracedDoc>(await Api.GetJsonAsync(id), Json);
+            if (doc?.Kind != "traced" || string.IsNullOrEmpty(doc.Source))
+            {
+                Nav.NavigateTo($"d/{id}"); // a mandala: open it in the designer instead
+                return;
+            }
+            var list = await Api.ListAsync();
+            name = list.FirstOrDefault(d => d.Id == id)?.Name ?? "";
+            s = doc.Settings ?? new();
+            sourceName = doc.SourceName;
+            await UseImage(doc.SourceName, doc.Source, keepName: true);
+        }
+        catch (Exception ex) { message = "Couldn't open that design: " + ex.Message; }
+    }
+
+    private async Task PickImage()
+    {
+        var picked = await JS.InvokeAsync<Picked?>("mandalaTrace.pick");
+        if (picked != null) await UseImage(picked.Name, picked.DataUrl, keepName: false);
+    }
+
+    [JSInvokable]
+    public async Task ImageDropped(string fileName, string dataUrl)
+    {
+        await UseImage(fileName, dataUrl, keepName: false);
+        StateHasChanged();
+    }
+
+    private async Task UseImage(string fileName, string dataUrl, bool keepName)
+    {
+        try
+        {
+            original = dataUrl;
+            sourceName = fileName;
+            var loaded = await JS.InvokeAsync<Loaded>("mandalaTrace.load", dataUrl, fileName, s.Detail);
+            source = loaded.DataUrl;
+            if (!keepName) name = NameFrom(fileName);
+            message = "";
+            result = null;
+            await Retrace();
+        }
+        catch (Exception ex) { message = "Couldn't open that image: " + ex.Message; }
+    }
+
+    private static string NameFrom(string fileName)
+    {
+        string n = Path.GetFileNameWithoutExtension(fileName).Replace('_', ' ').Replace('-', ' ').Trim();
+        return n.Length == 0 ? "" : char.ToUpper(n[0]) + n[1..];
+    }
+
+    private async Task SetDetail(int detail)
+    {
+        s = s with { Detail = detail };
+        if (original != null) await UseImage(sourceName, original, keepName: true);
+    }
+
+    /// <summary>Changes a setting, then re-traces once the changes stop for a moment.</summary>
+    private void Set(Action change)
+    {
+        change();
+        _ = Schedule();
+    }
+
+    private async Task Schedule()
+    {
+        int mine = ++version;
+        tracing = true;
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(250);
+        if (mine == version) await Retrace();
+    }
+
+    private async Task Retrace()
+    {
+        if (source == null) return;
+        int mine = ++version;
+        tracing = true;
+        StateHasChanged();
+        await Task.Delay(20); // let "tracing…" show before the browser gets busy
+        try
+        {
+            var r = await JS.InvokeAsync<TraceResult>("mandalaTrace.trace", s);
+            if (mine != version) return; // a newer change is on its way
+            result = r;
+            svgUrl = r.Svg == null ? null : "data:image/svg+xml;charset=utf-8," + Uri.EscapeDataString(r.Svg);
+        }
+        catch (Exception ex) { message = "Tracing failed: " + ex.Message; }
+        tracing = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private string DocJson() => JsonSerializer.Serialize(new TracedDoc("traced", sourceName, source!, s), Json);
+
+    private async Task Save()
+    {
+        if (result?.Svg == null || source == null) return;
+        busy = true;
+        try
+        {
+            string? nm = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+            if (Id is long id)
+            {
+                await Api.UpdateAsync(id, nm, DocJson(), result.Svg);
+                message = "Saved changes.";
+            }
+            else
+            {
+                var created = await Api.CreateAsync(nm, DocJson(), result.Svg, saveFolder == 0 ? null : saveFolder, "traced");
+                name = created.Name;
+                message = $"Saved as {created.Name}. It's in 🖼 Gallery" +
+                    (folders.FirstOrDefault(f => f.Id == saveFolder) is { } sf ? $", in the {sf.Name} folder." : ".");
+                Nav.NavigateTo($"trace/{created.Id}", replace: true);
+            }
+        }
+        catch (Exception ex) { message = "Couldn't save: " + ex.Message; }
+        busy = false;
+    }
+
+    private async Task DownloadSvg()
+    {
+        if (result?.Svg == null) return;
+        string file = string.IsNullOrWhiteSpace(name) ? "coloring-page" : name.Trim();
+        await JS.InvokeVoidAsync("mandala.download", file + ".svg", "image/svg+xml", result.Svg);
+    }
+}

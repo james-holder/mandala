@@ -2,7 +2,11 @@ using System.Net.Http.Json;
 
 namespace MandalaWeb.Client;
 
-public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc, long? FolderId = null);
+/// <summary>Kind is "mandala" or "traced" (a traced image).</summary>
+public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc, long? FolderId = null, string Kind = "mandala")
+{
+    public bool IsTraced => Kind == "traced";
+}
 
 public sealed record FolderSummary(long Id, string Name);
 
@@ -13,7 +17,7 @@ public sealed class DesignApi
 
     public DesignApi(HttpClient http) => _http = http;
 
-    private sealed record Upload(string? Name, string Json, string Svg, long? FolderId = null);
+    private sealed record Upload(string? Name, string Json, string Svg, long? FolderId = null, string? Kind = null);
     private sealed record MoveRequest(long[] Ids, long? FolderId);
     private sealed record NameResult(string Name);
     private sealed record RenameRequest(string Name);
@@ -28,9 +32,9 @@ public sealed class DesignApi
 
     public Task<string> GetSvgAsync(long id) => _http.GetStringAsync($"api/designs/{id}/svg");
 
-    public async Task<DesignSummary> CreateAsync(string? name, string json, string svg, long? folderId = null)
+    public async Task<DesignSummary> CreateAsync(string? name, string json, string svg, long? folderId = null, string? kind = null)
     {
-        var response = await _http.PostAsJsonAsync("api/designs", new Upload(name, json, svg, folderId));
+        var response = await _http.PostAsJsonAsync("api/designs", new Upload(name, json, svg, folderId, kind));
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<DesignSummary>())!;
     }

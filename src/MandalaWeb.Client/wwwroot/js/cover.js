@@ -56,12 +56,17 @@ window.mandalaCover = (() => {
         return promise;
     }
 
-    async function drawMandala(ctx, dpi, svgText, cx, cy, diameterIn) {
-        const prepared = prepareSvg(svgText, diameterIn, 0.35 / 25.4);
+    // Draws a design centered at (cx, cy), fitted inside a sizeIn square without changing its shape
+    // (mandalas are square; traced pictures can be any shape)
+    async function drawMandala(ctx, dpi, svgText, cx, cy, sizeIn) {
+        const vb = /viewBox="\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/.exec(svgText);
+        const aspect = vb && +vb[1] && +vb[2] ? +vb[1] / +vb[2] : 1;
+        const wIn = aspect >= 1 ? sizeIn : sizeIn * aspect, hIn = aspect >= 1 ? sizeIn / aspect : sizeIn;
+        const prepared = prepareSvg(svgText, wIn, 0.35 / 25.4);
         // Rasterize at the final size so lines stay crisp (the browser renders the vector SVG at this size)
-        const px = Math.max(1, Math.round(diameterIn * dpi));
-        const img = await loadImage(px + ":" + prepared.length + ":" + prepared.slice(-64), prepared);
-        ctx.drawImage(img, (cx - diameterIn / 2) * dpi, (cy - diameterIn / 2) * dpi, px, px);
+        const pw = Math.max(1, Math.round(wIn * dpi)), ph = Math.max(1, Math.round(hIn * dpi));
+        const img = await loadImage(pw + "x" + ph + ":" + prepared.length + ":" + prepared.slice(-64), prepared);
+        ctx.drawImage(img, (cx - wIn / 2) * dpi, (cy - hIn / 2) * dpi, pw, ph);
     }
 
     function wrap(ctx, text, maxW) {

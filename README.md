@@ -27,6 +27,13 @@ entirely in the browser: designs are generated on your own computer, and nothing
   redraw each design from its saved data, so older designs get this too.
 - **👁 Preview** (design page, gallery export and KDP cover) shows the finished PDF in a pop-up before you download it.
 
+## Tracing images
+
+- **🖍 Trace image** turns clip art or a drawing into a black-and-white coloring page (vector), using the public-domain
+  imagetracer.js (`wwwroot/lib`). Modes: line drawing, solid shapes → outlines, color clip art → outlines.
+- Traced designs are saved with kind `traced`: the stored SVG is the page, and the JSON keeps the working image and
+  settings so it can be re-traced. They go in folders and books like mandalas; export fits any shape inside the margins.
+
 ## Running locally
 
 ```bash

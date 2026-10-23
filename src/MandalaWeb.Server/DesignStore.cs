@@ -4,10 +4,11 @@ using Microsoft.Data.Sqlite;
 namespace MandalaWeb.Server;
 
 /// <summary>A saved design: its .mandala JSON plus a coloring-page SVG for thumbnails and PDF export.</summary>
-public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc, long? FolderId = null);
+/// <summary>Kind is "mandala" (Json is a .mandala document) or "traced" (Json holds the source image and trace settings).</summary>
+public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc, long? FolderId = null, string Kind = "mandala");
 
-/// <summary>FolderId is only used when a design is first saved; moving it later goes through Move.</summary>
-public sealed record DesignUpload(string? Name, string Json, string Svg, long? FolderId = null);
+/// <summary>FolderId and Kind are only used when a design is first saved; moving it later goes through Move.</summary>
+public sealed record DesignUpload(string? Name, string Json, string Svg, long? FolderId = null, string? Kind = null);
 
 /// <summary>A folder for organizing designs, such as one per book. Each design is in at most one folder.</summary>
 public sealed record FolderSummary(long Id, string Name);
@@ -44,6 +45,8 @@ public sealed class DesignStore
         // Databases from before folders existed get the new column
         if (!HasColumn(db, "Designs", "FolderId"))
             Exec(db, "ALTER TABLE Designs ADD COLUMN FolderId INTEGER NULL");
+        if (!HasColumn(db, "Designs", "Kind"))
+            Exec(db, "ALTER TABLE Designs ADD COLUMN Kind TEXT NOT NULL DEFAULT 'mandala'");
     }
 
     private static bool HasColumn(SqliteConnection db, string table, string column)
@@ -73,12 +76,12 @@ public sealed class DesignStore
     {
         using var db = Open();
         using var cmd = db.CreateCommand();
-        cmd.CommandText = "SELECT Id, Name, UpdatedUtc, FolderId FROM Designs ORDER BY UpdatedUtc DESC";
+        cmd.CommandText = "SELECT Id, Name, UpdatedUtc, FolderId, Kind FROM Designs ORDER BY UpdatedUtc DESC";
         using var r = cmd.ExecuteReader();
         var result = new List<DesignSummary>();
         while (r.Read())
             result.Add(new DesignSummary(r.GetInt64(0), r.GetString(1), DateTime.Parse(r.GetString(2)).ToUniversalTime(),
-                r.IsDBNull(3) ? null : r.GetInt64(3)));
+                r.IsDBNull(3) ? null : r.GetInt64(3), r.GetString(4)));
         return result;
     }
 
@@ -118,22 +121,24 @@ public sealed class DesignStore
 
     public DesignSummary Create(DesignUpload upload)
     {
-        string name = Clean(upload.Name) ?? NextName();
+        string name = Clean(upload.Name) ?? NextName(upload.Kind == "traced" ? "Image" : "Mandala");
         string now = DateTime.UtcNow.ToString("O");
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO Designs (Name, Json, Svg, CreatedUtc, UpdatedUtc, FolderId) VALUES ($name, $json, $svg, $now, $now, $folder);
+            INSERT INTO Designs (Name, Json, Svg, CreatedUtc, UpdatedUtc, FolderId, Kind) VALUES ($name, $json, $svg, $now, $now, $folder, $kind);
             SELECT last_insert_rowid();
             """;
         long? folder = upload.FolderId is long f && FolderExists(db, f) ? f : null;
         cmd.Parameters.AddWithValue("$folder", (object?)folder ?? DBNull.Value);
+        string kind = upload.Kind == "traced" ? "traced" : "mandala";
+        cmd.Parameters.AddWithValue("$kind", kind);
         cmd.Parameters.AddWithValue("$name", name);
         cmd.Parameters.AddWithValue("$json", upload.Json);
         cmd.Parameters.AddWithValue("$svg", upload.Svg);
         cmd.Parameters.AddWithValue("$now", now);
         long id = (long)cmd.ExecuteScalar()!;
-        return new DesignSummary(id, name, DateTime.Parse(now).ToUniversalTime(), folder);
+        return new DesignSummary(id, name, DateTime.Parse(now).ToUniversalTime(), folder, kind);
     }
 
     public bool Update(long id, DesignUpload upload)

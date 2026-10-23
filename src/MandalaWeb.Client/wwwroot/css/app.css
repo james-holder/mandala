@@ -234,3 +234,23 @@ label.inline select { width: auto; }
 
 button.danger { color: #b3261e; border-color: #e6b8b4; }
 button.danger:hover:not(:disabled) { background: #fdecea; }
+
+/* ---------- Trace an image ---------- */
+.trace-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); height: calc(100vh - 56px); min-height: 0; }
+.trace-layout .panel { border-right: 1px solid var(--line); }
+.trace-main { overflow: auto; padding: 1rem 1.25rem; border: 3px dashed transparent; }
+.trace-main.drop { border-color: var(--accent); background: var(--accent-soft); }
+.trace-empty { text-align: center; padding: 4rem 1rem; color: var(--muted); max-width: 560px; margin: 0 auto; }
+.trace-panes { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+.trace-panes figure { margin: 0; background: white; border: 1px solid var(--line); border-radius: 10px; padding: 0.6rem; }
+.trace-panes figcaption { font-size: 0.85rem; font-weight: 600; color: var(--muted); margin-bottom: 0.4rem; }
+.trace-panes figcaption small { font-weight: normal; }
+.trace-panes img { display: block; width: 100%; max-height: 72vh; object-fit: contain; }
+.trace-panes figure:last-child img { cursor: zoom-in; }
+.trace-panes img.stale { opacity: 0.5; }
+.trace-name { width: 160px; }
+.panel .warn { font-size: 0.82rem; color: #8a4b00; background: #fff6e5; border: 1px solid #f3d9a8; border-radius: 6px; padding: 0.45rem 0.6rem; }
+.panel .ok { font-size: 0.82rem; color: #2e7d4f; }
+@media (max-width: 800px) {
+    .trace-layout { grid-template-columns: 1fr; height: auto; }
+}
