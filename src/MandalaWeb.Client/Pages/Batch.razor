@@ -1,0 +1,198 @@
+@page "/batch"
+@inject DesignApi Api
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>Batch · Mandala Maker</PageTitle>
+
+<header class="toolbar">
+    <div class="brand">Mandala Maker</div>
+    <div class="group">
+        <a class="button" href="">← Back to designing</a>
+        <a class="button" href="gallery">🖼 Gallery</a>
+    </div>
+    <div class="group">
+        <label class="inline">Style
+            <select @bind="style" disabled="@busy">
+                <option value="intricate">✦ Intricate</option>
+                <option value="lineart">✏ Line art</option>
+            </select>
+        </label>
+        <label class="inline">How many
+            <select @bind="howMany" disabled="@busy">
+                <option value="6">6</option>
+                <option value="12">12</option>
+                <option value="24">24</option>
+            </select>
+        </label>
+        <button class="primary" @onclick="GenerateAll" disabled="@busy">@(busy ? $"Making {made} of {target}…" : "✦ Generate")</button>
+    </div>
+    <div class="group">
+        <button @onclick="ReplaceUnpicked" disabled="@(busy || items.Count == 0 || items.All(i => i.Picked || i.SavedId != null))"
+                title="Keep the ones you've picked and make new designs in place of the rest">↻ Replace the rest</button>
+        <button class="accent" @onclick="SavePicked" disabled="@(busy || PickedCount == 0)">💾 Save @PickedCount picked</button>
+    </div>
+</header>
+
+<main class="batch-page">
+    <p class="message">@message</p>
+
+    @if (items.Count == 0 && !busy)
+    {
+        <div class="empty">
+            <h2>Make a batch of designs</h2>
+            <p>Generate a grid of mandalas, click the ones you like, and save them all in one go. Unpicked ones can be replaced with new ones as often as you like.</p>
+        </div>
+    }
+
+    <div class="batch-grid">
+        @foreach (var item in items)
+        {
+            var it = item;
+            <div class="batch-tile @(it.Picked ? "picked" : "") @(it.SavedId != null ? "saved" : "")" @onclick="() => TogglePick(it)">
+                <img src="@it.DataUrl" alt="Generated mandala" />
+                <span class="pick">@(it.SavedId != null ? "Saved" : it.Picked ? "✓" : "")</span>
+                <div class="tile-actions" @onclick:stopPropagation="true">
+                    @if (it.SavedId is long id)
+                    {
+                        <span class="saved-name">@it.Name</span>
+                        <button @onclick='() => Nav.NavigateTo($"d/{id}")'>Edit</button>
+                    }
+                    else
+                    {
+                        <button @onclick="() => Reroll(it)" disabled="@busy" title="Replace just this one">↻</button>
+                        <button @onclick="() => EditOne(it)" disabled="@busy" title="Save it and open it in the editor">Edit</button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</main>
+
+@code {
+    private sealed class Item
+    {
+        public MandalaDocument Doc = new();
+        public string Svg = "";
+        public string DataUrl = "";
+        public bool Picked;
+        public long? SavedId;
+        public string? Name;
+    }
+
+    private const string SettingsKey = "mandala.settings";
+    private readonly Random rng = new();
+    private readonly List<Item> items = new();
+    private AppSettings settings = new();
+    private string style = "intricate";
+    private int howMany = 12;
+    private bool busy;
+    private int made, target;
+    private string message = "";
+
+    private int PickedCount => items.Count(i => i.Picked && i.SavedId == null);
+
+    protected override async Task OnInitializedAsync()
+    {
+        settings = AppSettings.FromJson(await JS.InvokeAsync<string?>("mandala.load", SettingsKey));
+    }
+
+    private Item Make()
+    {
+        var doc = style == "lineart"
+            ? RandomMandala.CreateLineArt(rng, 200, settings.Weight)
+            : RandomMandala.CreateIntricate(rng, 200, settings.Weight);
+        string svg = SvgWriter.Export(doc, coloringPage: true);
+        return new Item { Doc = doc, Svg = svg, DataUrl = "data:image/svg+xml;charset=utf-8," + Uri.EscapeDataString(svg) };
+    }
+
+    /// <summary>Generates designs one at a time, letting the page update in between so the grid fills in as it goes.</summary>
+    private async Task Fill(IList<int> slots)
+    {
+        busy = true;
+        made = 0;
+        target = slots.Count;
+        foreach (int slot in slots)
+        {
+            await Task.Delay(1); // let the page draw the tiles made so far
+            var item = Make();
+            if (slot < items.Count) items[slot] = item; else items.Add(item);
+            made++;
+            StateHasChanged();
+        }
+        busy = false;
+    }
+
+    private async Task GenerateAll()
+    {
+        if (items.Any(i => i.Picked && i.SavedId == null) &&
+            !await JS.InvokeAsync<bool>("mandala.confirm", "You have picked designs that aren't saved yet. Replace the whole batch anyway?"))
+            return;
+        items.Clear();
+        await Fill(Enumerable.Range(0, howMany).ToList());
+        message = $"Made {items.Count} designs. Click the ones you like, then 💾 Save. Use ↻ Replace the rest to try again on the others.";
+    }
+
+    private async Task ReplaceUnpicked()
+    {
+        var slots = Enumerable.Range(0, items.Count).Where(i => !items[i].Picked && items[i].SavedId == null).ToList();
+        await Fill(slots);
+        message = $"Replaced {slots.Count} design{(slots.Count == 1 ? "" : "s")}; your picks stayed put.";
+    }
+
+    private async Task Reroll(Item item)
+    {
+        int i = items.IndexOf(item);
+        if (i >= 0) await Fill(new[] { i });
+    }
+
+    private void TogglePick(Item item)
+    {
+        if (busy || item.SavedId != null) return;
+        item.Picked = !item.Picked;
+    }
+
+    private async Task<bool> Save(Item item)
+    {
+        try
+        {
+            var created = await Api.CreateAsync(null, item.Doc.ToJson(), item.Svg);
+            item.SavedId = created.Id;
+            item.Name = created.Name;
+            item.Picked = false;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = "Couldn't save: " + ex.Message;
+            return false;
+        }
+    }
+
+    private async Task SavePicked()
+    {
+        busy = true;
+        var picked = items.Where(i => i.Picked && i.SavedId == null).ToList();
+        int saved = 0;
+        foreach (var item in picked)
+        {
+            if (!await Save(item)) break;
+            saved++;
+            StateHasChanged();
+        }
+        busy = false;
+        if (saved > 0)
+        {
+            var names = picked.Where(p => p.SavedId != null).Select(p => p.Name).ToList();
+            message = $"Saved {saved} design{(saved == 1 ? "" : "s")} ({names.First()}{(names.Count > 1 ? $" to {names.Last()}" : "")}). They're in 🖼 Gallery.";
+        }
+    }
+
+    private async Task EditOne(Item item)
+    {
+        busy = true;
+        bool ok = await Save(item);
+        busy = false;
+        if (ok) Nav.NavigateTo($"d/{item.SavedId}");
+    }
+}

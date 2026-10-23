@@ -1,0 +1,35 @@
+# Mandala Maker on Fly.io, served at mandala.candaceholder.com
+# Everything runs in the browser, so the machine only serves files and can sleep when nobody is using it.
+
+app = 'candaceholder-mandala'
+primary_region = 'dfw'
+
+[build]
+
+[env]
+  DESIGNS_DB = '/data/designs.db'
+
+# Saved designs live in SQLite on this volume, so they survive deploys and restarts
+[[mounts]]
+  source = 'mandala_data'
+  destination = '/data'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [[http_service.checks]]
+    grace_period = '10s'
+    interval = '30s'
+    method = 'GET'
+    path = '/healthz'
+    timeout = '5s'
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1

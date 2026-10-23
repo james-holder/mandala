@@ -1,0 +1,23 @@
+@* A labeled slider with a number box, both editing the same value. Changes apply when you let go or press Enter. *@
+<div class="num">
+    <span class="label">@Label</span>
+    <input type="range" min="@F(Min)" max="@F(Max)" step="@F(Step)" value="@F(Value)" @onchange="OnChange" />
+    <input type="number" min="@F(Min)" max="@F(Max)" step="@F(Step)" value="@F(Value)" @onchange="OnChange" />
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public double Value { get; set; }
+    [Parameter] public double Min { get; set; }
+    [Parameter] public double Max { get; set; } = 100;
+    [Parameter] public double Step { get; set; } = 1;
+    [Parameter] public Action<double>? Changed { get; set; }
+
+    private void OnChange(ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double v))
+            Changed?.Invoke(Math.Clamp(v, Min, Max));
+    }
+
+    private static string F(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
+}

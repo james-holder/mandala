@@ -1,0 +1,41 @@
+# Mandala Maker (web)
+
+The web version of Mandala Maker, served at **mandala.candaceholder.com**. It's a Blazor WebAssembly app, so it runs
+entirely in the browser: designs are generated on your own computer, and nothing is stored on the server.
+
+## Projects
+
+| Project | What it is |
+|---|---|
+| `src/MandalaCore` | The shapes, generators and SVG output, ported from the desktop app (`../MandalaMaker`). WPF's geometry is replaced by `Geom/` (a path reader plus Clipper2 for merging shapes). |
+| `src/MandalaWeb.Client` | The web page (Blazor WebAssembly). |
+| `src/MandalaWeb.Server` | A tiny ASP.NET Core host that serves the files on Fly.io. |
+
+## Where things are saved
+
+- **Shape preferences** and the file-name counter are kept in the browser (local storage), per browser.
+- **Save** downloads `Mandala_NNN.mandala` and `Mandala_NNN.svg` to your Downloads folder. The `.mandala` files open in
+  both the web and desktop apps.
+- **Print book** lets you pick several `.mandala` files and prints them one per page; choose "Save as PDF" in the print
+  dialog for a PDF.
+
+## Running locally
+
+```bash
+dotnet run --project src/MandalaWeb.Server
+```
+
+## Deploying
+
+```bash
+fly deploy
+```
+
+The app is `candaceholder-mandala` on Fly.io. The subdomain needs a DNS record at GoDaddy (where candaceholder.com's
+DNS lives): a CNAME from `mandala` to `candaceholder-mandala.fly.dev`, plus the certificate from
+`fly certs add mandala.candaceholder.com -a candaceholder-mandala`.
+
+## Keeping in step with the desktop app
+
+`MandalaCore` started as a copy of the desktop app's `Model/` and `Shapes/` code. New shapes added to the desktop app
+need copying here too (or both apps can later share this library).

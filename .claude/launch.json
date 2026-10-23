@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mandala-web",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "C:/Users/James/source/repos/MandalaWeb/src/MandalaWeb.Server", "--urls", "http://localhost:5280"],
+      "port": 5280
+    }
+  ]
+}

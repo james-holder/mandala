@@ -1,0 +1,482 @@
+@page "/gallery"
+@inject DesignApi Api
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>Saved designs · Mandala Maker</PageTitle>
+
+<header class="toolbar">
+    <div class="brand">Mandala Maker</div>
+    <div class="group">
+        <a class="button" href="">← Back to designing</a>
+        <a class="button" href="batch">▦ Batch</a>
+    </div>
+    <div class="group">
+        <button @onclick="SelectAll" title="Select every design, oldest first">Select all</button>
+        <button @onclick="SelectNone">Select none</button>
+    </div>
+    <span class="count">@designs.Count saved · @order.Count selected</span>
+</header>
+
+<main class="gallery-page">
+    <section class="export-bar">
+        <label>File name / prefix <input @bind="prefix" @bind:event="oninput" placeholder="Mandalas" /></label>
+        <label>Export as
+            <select @bind="mode">
+                <option value="kdp">Amazon KDP book interior</option>
+                <option value="single">One PDF</option>
+                <option value="separate">A PDF per design</option>
+            </select>
+        </label>
+        @if (mode == "kdp")
+        {
+            <label>Trim size
+                <select @bind="trim">
+                    @foreach (var t in TrimSizes) { <option value="@t.Key">@t.Key in</option> }
+                </select>
+            </label>
+        }
+        else
+        {
+            <label>Paper
+                <select @bind="paper">
+                    <option value="letter">Letter</option>
+                    <option value="a4">A4</option>
+                    <option value="legal">Legal</option>
+                    <option value="a5">A5</option>
+                </select>
+            </label>
+        }
+        <label class="radio" title="Each design gets an empty back, so markers can't bleed through onto the next design">
+            <input type="checkbox" @bind="blankBacks" disabled="@(mode == "separate")" /> Blank back after each design
+        </label>
+        <button class="primary" @onclick="Export" disabled="@(order.Count == 0 || busy)">
+            @(busy ? "Making PDF…" : $"Export {order.Count} to PDF")
+        </button>
+    </section>
+
+    @if (mode == "kdp")
+    {
+        <section class="kdp">
+            <div class="kdp-fields">
+                <label>Book title <input @bind="title" @bind:event="oninput" placeholder="Leave empty for no title page" /></label>
+                <label>Subtitle <input @bind="subtitle" @bind:event="oninput" placeholder="Relaxing Mandalas for Adults" /></label>
+                <label>Author <input @bind="author" @bind:event="oninput" placeholder="Candace Holder" /></label>
+                <label class="radio"><input type="checkbox" @bind="belongsTo" /> "This book belongs to" page</label>
+            </div>
+            <ul class="preflight">
+                @foreach (var check in Preflight())
+                {
+                    <li class="@(check.Ok ? "ok" : "warn")">@(check.Ok ? "✓" : "⚠") @check.Text</li>
+                }
+            </ul>
+        </section>
+
+        <section class="cover">
+            <div class="cover-head">
+                <h3>Cover <small>back · spine · front, with bleed. Uses the title, subtitle and author above.</small></h3>
+                <button class="primary" @onclick="ExportCover" disabled="@(order.Count == 0 || busy)">@(busy ? "Working…" : "Export cover PDF")</button>
+            </div>
+            @if (order.Count == 0)
+            {
+                <div class="cover-start">
+                    <p>Pick the designs for this book first; the cover's spine width depends on how many pages the book has.</p>
+                    <button class="primary" @onclick="SelectAll">Select all designs</button>
+                    <span class="help">or click designs below to choose them one by one</span>
+                </div>
+            }
+            else
+            {
+                <div class="cover-grid">
+                    <div class="cover-fields">
+                        <label>Front design
+                            <select value="@frontId" @onchange="e => { frontId = long.Parse(e.Value!.ToString()!); coverDirty = true; }">
+                                @foreach (var id in order)
+                                {
+                                    var d = designs.FirstOrDefault(x => x.Id == id);
+                                    if (d != null) { <option value="@id">@d.Name</option> }
+                                }
+                            </select>
+                        </label>
+                        <label>Paper
+                            <select value="@coverPaper" @onchange="e => { coverPaper = e.Value!.ToString()!; coverDirty = true; }">
+                                <option value="white">White</option>
+                                <option value="cream">Cream</option>
+                            </select>
+                        </label>
+                        <label>Font
+                            <select value="@coverFont" @onchange="e => { coverFont = e.Value!.ToString()!; coverDirty = true; }">
+                                <option value="serif">Classic serif</option>
+                                <option value="elegant">Elegant</option>
+                                <option value="clean">Clean</option>
+                                <option value="script">Script</option>
+                            </select>
+                        </label>
+                        <div class="color-row">
+                            <label>Background <input type="color" value="@coverBg" @onchange="e => { coverBg = e.Value!.ToString()!; coverDirty = true; }" /></label>
+                            <label>Text <input type="color" value="@coverInk" @onchange="e => { coverInk = e.Value!.ToString()!; coverDirty = true; }" /></label>
+                        </div>
+                        <div class="swatches">
+                            @foreach (var (bg, ink) in CoverPalettes)
+                            {
+                                var pair = (bg, ink);
+                                <button class="swatch-btn" style="background:@bg;color:@ink" title="Use this color pair"
+                                        @onclick="() => { coverBg = pair.bg; coverInk = pair.ink; coverDirty = true; }">Aa</button>
+                            }
+                        </div>
+                        <label>Back cover text
+                            <textarea rows="5" @bind="blurb" @bind:event="oninput" @bind:after="() => coverDirty = true"
+                                      placeholder="Relax and unwind with 30 hand-crafted mandalas. Single-sided pages, so markers won't bleed through."></textarea>
+                        </label>
+                        <label class="radio"><input type="checkbox" checked="@backPreviews" @onchange="e => { backPreviews = (bool)e.Value!; coverDirty = true; }" /> Show sample designs on the back</label>
+                        <p class="help">@coverInfo</p>
+                    </div>
+                    <div class="cover-preview">
+                        <canvas @ref="coverCanvas"></canvas>
+                        <p class="legend"><span class="trim">— trim</span> <span class="spine">— spine</span> <span class="safe">— keep text inside</span> <span class="bar">— barcode area</span> (guides don't print)</p>
+                    </div>
+                </div>
+            }
+        </section>
+    }
+
+    @if (order.Count > 0)
+    {
+        <section class="book-order">
+            <h3>Page order <small>use the arrows to rearrange; this is the order in the PDF</small></h3>
+            <ol>
+                @for (int i = 0; i < order.Count; i++)
+                {
+                    int index = i;
+                    var d = designs.FirstOrDefault(x => x.Id == order[index]);
+                    if (d == null) continue;
+                    <li>
+                        <img src="api/designs/@d.Id/svg?v=@d.UpdatedUtc.Ticks" alt="" />
+                        <span>@(index + 1). @d.Name</span>
+                        <button @onclick="() => Move(index, -1)" disabled="@(index == 0)" title="Earlier">◀</button>
+                        <button @onclick="() => Move(index, 1)" disabled="@(index == order.Count - 1)" title="Later">▶</button>
+                    </li>
+                }
+            </ol>
+        </section>
+    }
+
+    @if (!string.IsNullOrEmpty(message))
+    {
+        <p class="message">@message</p>
+    }
+
+    @if (loading)
+    {
+        <p class="message">Loading saved designs…</p>
+    }
+    else if (designs.Count == 0)
+    {
+        <div class="empty">
+            <h2>No saved designs yet</h2>
+            <p>Make a mandala and press 💾 Save, or use ▦ Batch to make a dozen at once. They'll show up here.</p>
+            <a class="button primary" href="">Start designing</a>
+        </div>
+    }
+    else
+    {
+        <div class="cards">
+            @foreach (var d in designs)
+            {
+                var design = d;
+                int position = order.IndexOf(design.Id);
+                <div class="card @(position >= 0 ? "chosen" : "")">
+                    <div class="thumb" @onclick="() => Toggle(design.Id)">
+                        <img src="api/designs/@design.Id/svg?v=@design.UpdatedUtc.Ticks" alt="@design.Name" loading="lazy" />
+                        @if (position >= 0) { <span class="badge">@(position + 1)</span> }
+                        else { <span class="badge empty"></span> }
+                    </div>
+                    @if (renamingId == design.Id)
+                    {
+                        <div class="rename">
+                            <input @bind="renameText" @onkeydown="e => RenameKey(e, design)" />
+                            <button @onclick="() => SaveRename(design)">✓</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="title" title="Click to rename" @onclick="() => StartRename(design)">@design.Name</div>
+                    }
+                    <div class="meta">@design.UpdatedUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</div>
+                    <div class="actions">
+                        <button @onclick='() => Nav.NavigateTo($"d/{design.Id}")'>Open</button>
+                        <button @onclick="() => Delete(design)">Delete</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</main>
+
+@code {
+    // Common KDP trim sizes for coloring books (inches)
+    private static readonly Dictionary<string, (double W, double H)> TrimSizes = new()
+    {
+        ["8.5 × 11"] = (8.5, 11),
+        ["8.25 × 11"] = (8.25, 11),
+        ["8 × 10"] = (8, 10),
+        ["8.5 × 8.5"] = (8.5, 8.5),
+        ["8.25 × 8.25"] = (8.25, 8.25),
+        ["7 × 10"] = (7, 10),
+        ["6 × 9"] = (6, 9),
+    };
+
+    private const double MinLineMm = 0.35; // KDP's minimum is 0.3 mm; this leaves a little room
+
+    private List<DesignSummary> designs = new();
+    private readonly List<long> order = new(); // selected designs, in book order
+    private bool loading = true;
+    private bool busy;
+    private string prefix = "Mandalas";
+    private string paper = "letter";
+    private string mode = "kdp";
+    private string trim = "8.5 × 11";
+    private bool blankBacks = true;
+    private string title = "";
+    private string subtitle = "";
+    private string author = "";
+    private bool belongsTo = true;
+    private string? message;
+    private long? renamingId;
+
+    // ---------- Cover ----------
+    private static readonly (string Bg, string Ink)[] CoverPalettes =
+    {
+        ("#ffffff", "#222222"), ("#1f2a44", "#f6e7c1"), ("#2e5e4e", "#fdf6e3"), ("#7b2d43", "#fbe9e7"),
+        ("#f3e6d3", "#5a3e2b"), ("#e8f1f8", "#1f3a5f"), ("#3d2c5c", "#f4d58d"), ("#f7d6d0", "#6b2737"),
+    };
+    private ElementReference coverCanvas;
+    private long? frontId;
+    private string coverPaper = "white";
+    private string coverFont = "elegant";
+    private string coverBg = "#1f2a44";
+    private string coverInk = "#f6e7c1";
+    private string blurb = "";
+    private bool backPreviews = true;
+    private bool coverDirty = true;
+    private string coverInfo = "";
+    private string lastCoverKey = "";
+    private readonly Dictionary<long, string> svgCache = new();
+    private string renameText = "";
+
+    private string ExportName => string.IsNullOrWhiteSpace(prefix) ? "Mandalas" : CleanFileName(prefix);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { designs = await Api.ListAsync(); }
+        catch (Exception ex) { message = "Couldn't load saved designs: " + ex.Message; }
+        loading = false;
+    }
+
+    // ---------- Selection and page order ----------
+
+    private void Toggle(long id)
+    {
+        if (!order.Remove(id)) order.Add(id);
+        coverDirty = true;
+    }
+
+    // Oldest first, which is usually the order designs were made in
+    private void SelectAll()
+    {
+        foreach (var d in designs.OrderBy(d => d.Id))
+            if (!order.Contains(d.Id)) order.Add(d.Id);
+        coverDirty = true;
+    }
+
+    private void SelectNone() { order.Clear(); coverDirty = true; }
+
+    private void Move(int index, int delta)
+    {
+        int j = index + delta;
+        if (j < 0 || j >= order.Count) return;
+        (order[index], order[j]) = (order[j], order[index]);
+        coverDirty = true;
+    }
+
+    // ---------- KDP pre-flight ----------
+
+    private sealed record Check(bool Ok, string Text);
+
+    /// <summary>The page count the KDP export will produce, matching the layout in mandala.js.</summary>
+    private int KdpPageCount()
+    {
+        int n = 0;
+        if (!string.IsNullOrWhiteSpace(title)) n += 2;
+        if (belongsTo) n += 2;
+        n += blankBacks ? order.Count * 2 : order.Count;
+        if (n % 2 == 1) n++;
+        return n;
+    }
+
+    private IEnumerable<Check> Preflight()
+    {
+        int pages = KdpPageCount();
+        double gutter = pages <= 150 ? 0.375 : pages <= 300 ? 0.5 : pages <= 500 ? 0.625 : pages <= 700 ? 0.75 : 0.875;
+        int designsNeeded = (int)Math.Ceiling((24 - (pages - (blankBacks ? order.Count * 2 : order.Count))) / (blankBacks ? 2.0 : 1.0));
+        yield return pages >= 24
+            ? new Check(true, $"{pages} pages (KDP needs at least 24)")
+            : new Check(false, $"Only {pages} pages. KDP needs at least 24, so add about {Math.Max(1, designsNeeded - order.Count)} more design(s)");
+        if (pages > 828) yield return new Check(false, $"{pages} pages is over KDP's limit of 828");
+        yield return new Check(true, $"Trim {trim} in, no bleed. Art stays inside the margins: {gutter + 0.375}\" from the spine (KDP minimum {gutter}\"), 0.5\" outside, top and bottom");
+        yield return new Check(true, $"Lines thinner than {MinLineMm} mm are thickened (KDP minimum: 0.3 mm)");
+        yield return new Check(true, "Title page text is drawn as a 300 DPI image, so there are no fonts to embed");
+        if (!blankBacks) yield return new Check(false, "No blank backs: markers can bleed through to the design on the other side");
+        if (string.IsNullOrWhiteSpace(title)) yield return new Check(false, "No title page. Most coloring books have one (add a book title above)");
+    }
+
+    // ---------- Cover ----------
+
+    private async Task<string> Svg(long id)
+    {
+        if (!svgCache.TryGetValue(id, out var svg)) svgCache[id] = svg = await Api.GetSvgAsync(id);
+        return svg;
+    }
+
+    private async Task<object> CoverSpec()
+    {
+        long front = frontId is long f && order.Contains(f) ? f : order[0];
+        frontId = front;
+        var back = new List<string>();
+        if (backPreviews)
+            foreach (var id in order.Where(id => id != front).Take(4)) back.Add(await Svg(id));
+        var (w, h) = TrimSizes[trim];
+        return new
+        {
+            trimW = w, trimH = h, pages = Math.Max(24, KdpPageCount()), paper = coverPaper,
+            bg = coverBg, ink = coverInk, font = coverFont,
+            title = title.Trim(), subtitle = subtitle.Trim(), author = author.Trim(), blurb = blurb.Trim(),
+            frontSvg = await Svg(front), backSvgs = back,
+        };
+    }
+
+    private sealed record CoverSize(double WidthIn, double HeightIn, double SpineIn);
+
+    private string CoverInfo(CoverSize size)
+    {
+        int pages = Math.Max(24, KdpPageCount());
+        string spineText = pages >= 80 ? "Spine text: title and author." : $"No spine text (KDP only prints it on books over 79 pages; this one has {pages}).";
+        return $"Full cover {size.WidthIn:0.###} × {size.HeightIn:0.###} in, spine {size.SpineIn:0.###} in for {pages} pages on {coverPaper} paper. {spineText}";
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (mode != "kdp" || order.Count == 0) return;
+        // Redraw when anything that affects the cover has changed
+        string key = string.Join("|", coverDirty, title, subtitle, author, trim, blurb, blankBacks, belongsTo, string.Join(",", order));
+        if (!coverDirty && key == lastCoverKey) return;
+        lastCoverKey = key;
+        coverDirty = false;
+        try
+        {
+            var size = await JS.InvokeAsync<CoverSize>("mandalaCover.preview", coverCanvas, await CoverSpec());
+            string info = CoverInfo(size);
+            if (info != coverInfo) { coverInfo = info; StateHasChanged(); }
+        }
+        catch (Exception ex) { coverInfo = "Couldn't draw the cover preview: " + ex.Message; StateHasChanged(); }
+    }
+
+    private async Task ExportCover()
+    {
+        if (order.Count == 0) return;
+        busy = true;
+        message = null;
+        StateHasChanged();
+        try
+        {
+            var size = await JS.InvokeAsync<CoverSize>("mandalaCover.exportPdf", await CoverSpec(), ExportName + "-cover");
+            message = $"Exported {ExportName}-cover.pdf ({size.WidthIn:0.###} × {size.HeightIn:0.###} in, 300 DPI). Upload it as the paperback cover in KDP.";
+            if (KdpPageCount() < 24) message += " Note: the book is under 24 pages, so the spine was sized for 24.";
+        }
+        catch (Exception ex) { message = "Cover export failed: " + ex.Message; }
+        busy = false;
+        coverDirty = true;
+    }
+
+    // ---------- Rename and delete ----------
+
+    private void StartRename(DesignSummary d) { renamingId = d.Id; renameText = d.Name; }
+
+    private async Task RenameKey(KeyboardEventArgs e, DesignSummary d)
+    {
+        if (e.Key == "Enter") await SaveRename(d);
+        else if (e.Key == "Escape") renamingId = null;
+    }
+
+    private async Task SaveRename(DesignSummary d)
+    {
+        string name = CleanFileName(renameText);
+        renamingId = null;
+        if (name.Length == 0 || name == d.Name) return;
+        try
+        {
+            await Api.RenameAsync(d.Id, name);
+            designs[designs.IndexOf(d)] = d with { Name = name };
+        }
+        catch (Exception ex) { message = "Couldn't rename: " + ex.Message; }
+    }
+
+    private async Task Delete(DesignSummary d)
+    {
+        if (!await JS.InvokeAsync<bool>("mandala.confirm", $"Delete \"{d.Name}\"? This can't be undone.")) return;
+        try
+        {
+            await Api.DeleteAsync(d.Id);
+            designs.Remove(d);
+            order.Remove(d.Id);
+            message = $"Deleted {d.Name}.";
+        }
+        catch (Exception ex) { message = "Couldn't delete: " + ex.Message; }
+    }
+
+    // ---------- Export ----------
+
+    private sealed record PdfPage(string Name, string Svg);
+    private sealed record KdpResult(int Pages, double GutterIn);
+
+    private async Task Export()
+    {
+        if (order.Count == 0) return;
+        busy = true;
+        message = null;
+        StateHasChanged();
+        try
+        {
+            var pages = new List<PdfPage>();
+            foreach (long id in order)
+            {
+                var d = designs.First(x => x.Id == id);
+                pages.Add(new PdfPage(d.Name, await Api.GetSvgAsync(id)));
+            }
+
+            if (mode == "kdp")
+            {
+                var (w, h) = TrimSizes[trim];
+                var result = await JS.InvokeAsync<KdpResult>("mandala.exportKdp", pages, ExportName, new
+                {
+                    trimW = w, trimH = h,
+                    title = title.Trim(), subtitle = subtitle.Trim(), author = author.Trim(),
+                    belongsTo, blankBacks, minLineMm = MinLineMm,
+                });
+                message = $"Exported {ExportName}.pdf: a {result.Pages}-page KDP interior at {trim} in, ready to upload as the manuscript.";
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("mandala.exportPdf", pages, ExportName, paper, mode, blankBacks && mode == "single");
+                message = mode == "single"
+                    ? $"Exported {pages.Count} design{(pages.Count == 1 ? "" : "s")} to {ExportName}.pdf."
+                    : $"Exported {ExportName}_001.pdf to {ExportName}_{pages.Count:000}.pdf. (If your browser asks, allow multiple downloads.)";
+            }
+        }
+        catch (Exception ex) { message = "Export failed: " + ex.Message; }
+        busy = false;
+    }
+
+    private static string CleanFileName(string s) =>
+        new string(s.Trim().Where(c => !"\\/:*?\"<>|".Contains(c) && !char.IsControl(c)).ToArray());
+}

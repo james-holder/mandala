@@ -1,0 +1,6 @@
+**/bin/
+**/obj/
+.vs/
+.claude/
+.git/
+**/App_Data/

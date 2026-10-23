@@ -1,0 +1,439 @@
+﻿@page "/"
+@page "/d/{Id:long}"
+@using System.ComponentModel
+@implements IDisposable
+@inject IJSRuntime JS
+@inject DesignApi Api
+@inject NavigationManager Nav
+
+<PageTitle>Mandala Maker</PageTitle>
+
+<header class="toolbar">
+    <div class="brand">Mandala Maker</div>
+    <div class="group">
+        <button class="primary" @onclick="NewIntricate" title="Stacked petal layers with echoes and dots">✦ Intricate</button>
+        <button @onclick="NewLineArt" title="Banded line-art mandala">✏ Line art</button>
+        <button @onclick="GoToBatch" title="Make a grid of designs and save the ones you like">▦ Batch</button>
+    </div>
+    <div class="group">
+        <button class="save @(unsaved ? "unsaved" : "")" @onclick="SaveToDatabase" disabled="@saving"
+                title="Save to your saved designs (an automatic name is given to new designs)">💾 @(saving ? "Saving…" : designId == null ? "Save" : "Save changes")</button>
+        <button @onclick="SaveAsNew" title="Save as a new design, keeping the original">Save as new</button>
+        <button @onclick="GoToGallery" title="All saved designs: open, rename, delete, export to PDF">🖼 Gallery</button>
+    </div>
+    <div class="group">
+        <button @onclick="DownloadSvg" title="Download this design as an SVG coloring page">SVG</button>
+        <button @onclick="DownloadMandala" title="Download the .mandala file (opens in the desktop app too)">.mandala</button>
+        <button @onclick="OpenFile" title="Open a .mandala file from your computer">📂 Open file</button>
+        <button @onclick="PrintCurrent">🖨 Print</button>
+        <button @onclick="() => showPrefs = true">★ Shapes</button>
+    </div>
+</header>
+
+<main class="workspace">
+    <aside class="panel layers">
+        <h3>Layers <small>top = front</small></h3>
+        <div class="row">
+            <button @onclick="AddLayer">+ Add</button>
+            <button @onclick="DuplicateLayer" disabled="@(selected == null)">Duplicate</button>
+            <button @onclick="DeleteLayer" disabled="@(selected == null)">Delete</button>
+        </div>
+        <div class="row">
+            <button @onclick="() => MoveLayer(-1)" disabled="@(selected == null)" title="Bring forward">▲</button>
+            <button @onclick="() => MoveLayer(1)" disabled="@(selected == null)" title="Send backward">▼</button>
+            <button class="accent" @onclick="Reroll" disabled="@(selected == null)" title="New shape and details that fit the same band">🎲 Re-roll</button>
+        </div>
+        <ul class="layer-list">
+            @foreach (var layer in doc.Layers)
+            {
+                var l = layer;
+                <li class="@(l == selected ? "selected" : "")" @onclick="() => selected = l">
+                    <input type="checkbox" checked="@l.Visible" @onclick:stopPropagation="true"
+                           @onchange="e => { l.Visible = (bool)(e.Value ?? true); }" />
+                    <span class="name">@l.Name<small>@l.Summary</small></span>
+                </li>
+            }
+        </ul>
+    </aside>
+
+    <section class="preview">
+        <div class="canvas">@((MarkupString)PreviewSvg)</div>
+        <div class="status">@(fileName != null ? fileName + (unsaved ? " (unsaved changes)" : "") + " · " : "")@status</div>
+    </section>
+
+    <aside class="panel props">
+        @if (selected is { } s)
+        {
+            <h3>Selected layer</h3>
+            <label>Name <input @bind="s.Name" /></label>
+            <label>Shape
+                <select @bind="s.Shape">
+                    @foreach (var k in Enum.GetValues<ShapeKind>()) { <option value="@k">@Pretty(k.ToString())</option> }
+                </select>
+            </label>
+            <p class="help">@s.ShapeHelp</p>
+
+            <h4>Placement</h4>
+            <Num Label="Count" Value="s.Count" Min="1" Max="72" Step="1" Changed="v => s.Count = (int)v" />
+            <Num Label="Radius (mm)" Value="s.Radius" Min="0" Max="300" Step="0.5" Changed="v => s.Radius = v" />
+            <Num Label="Ring rotation°" Value="s.RingRotation" Min="-180" Max="180" Step="0.5" Changed="v => s.RingRotation = v" />
+            <label class="check"><input type="checkbox" @bind="s.OffsetHalfStep" /> Offset by half a step</label>
+
+            <h4>Shape size</h4>
+            <Num Label="Length (mm)" Value="s.Length" Min="0" Max="200" Step="0.5" Changed="v => s.Length = v" />
+            <label class="check"><input type="checkbox" @bind="s.LockRatio" /> Lock ratio (@s.RatioText)</label>
+            <Num Label="Width (mm)" Value="s.Width" Min="0" Max="200" Step="0.5" Changed="v => s.Width = v" />
+            <Num Label="Tweak" Value="s.Tweak" Min="0" Max="1" Step="0.01" Changed="v => s.Tweak = v" />
+            <Num Label="Spin°" Value="s.Spin" Min="-180" Max="180" Step="0.5" Changed="v => s.Spin = v" />
+
+            <h4>Details</h4>
+            <Num Label="Echo outlines" Value="s.InsetCount" Min="0" Max="5" Step="1" Changed="v => s.InsetCount = (int)v" />
+            <Num Label="Echo spacing" Value="s.InsetGap" Min="0.04" Max="0.45" Step="0.01" Changed="v => s.InsetGap = v" />
+            <label>Echo style
+                <select @bind="s.EchoStyle">@foreach (var e in Enum.GetValues<EchoStyle>()) { <option value="@e">@e</option> }</select>
+            </label>
+            <label>Echo accent
+                <select @bind="s.EchoAccent">@foreach (var e in Enum.GetValues<EchoAccent>()) { <option value="@e">@e</option> }</select>
+            </label>
+            <label>Inner shape
+                <select @bind="s.Inner">@foreach (var e in Enum.GetValues<InnerMotif>()) { <option value="@e">@Pretty(e.ToString())</option> }</select>
+            </label>
+            <Num Label="Inner size" Value="s.InnerSize" Min="0.05" Max="1" Step="0.01" Changed="v => s.InnerSize = v" />
+            <label>Hatching
+                <select @bind="s.Hatch">@foreach (var e in Enum.GetValues<HatchStyle>()) { <option value="@e">@e</option> }</select>
+            </label>
+            <Num Label="Hatch lines" Value="s.HatchCount" Min="1" Max="30" Step="1" Changed="v => s.HatchCount = (int)v" />
+
+            <h4>Style</h4>
+            <Num Label="Stroke (mm)" Value="s.StrokeWidth" Min="0" Max="5" Step="0.05" Changed="v => s.StrokeWidth = v" />
+            <label class="check" title="A filled layer is white inside, so it hides the layers behind it"><input type="checkbox" @bind="s.Filled" /> Filled (hides layers behind)</label>
+        }
+        else
+        {
+            <p class="help">Select a layer on the left to edit it.</p>
+        }
+
+        <h3>Document</h3>
+        <Num Label="Diameter (mm)" Value="doc.DiameterMm" Min="20" Max="600" Step="1" Changed="v => doc.DiameterMm = v" />
+        <label>Paper for printing
+            <select @bind="paper">
+                <option value="letter">Letter</option>
+                <option value="A4">A4</option>
+                <option value="legal">Legal</option>
+                <option value="A5">A5</option>
+            </select>
+        </label>
+    </aside>
+</main>
+
+@if (showPrefs)
+{
+    <div class="modal-backdrop" @onclick="ClosePrefs">
+        <div class="modal" @onclick:stopPropagation="true">
+            <h3>Shape preferences</h3>
+            <p class="help">★ Favorites are picked about 4× as often, and ⛔ Never leaves a shape out of random designs. Saved in this browser.</p>
+            <div class="pref-grid">
+                @foreach (var k in Enum.GetValues<ShapeKind>())
+                {
+                    var kind = k;
+                    var pref = settings.GetPreference(kind);
+                    <div class="pref @pref.ToString().ToLowerInvariant()">
+                        <span>@Pretty(kind.ToString())</span>
+                        <div class="seg">
+                            <button class="@(pref == ShapePreference.Never ? "on" : "")" title="Never" @onclick="() => SetPref(kind, ShapePreference.Never)">⛔</button>
+                            <button class="@(pref == ShapePreference.Normal ? "on" : "")" title="Normal" @onclick="() => SetPref(kind, ShapePreference.Normal)">●</button>
+                            <button class="@(pref == ShapePreference.Favorite ? "on" : "")" title="Favorite" @onclick="() => SetPref(kind, ShapePreference.Favorite)">★</button>
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="row end">
+                <button @onclick="ResetPrefs">Reset to defaults</button>
+                <button class="primary" @onclick="ClosePrefs">Done</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private const string SettingsKey = "mandala.settings";
+
+    [Parameter] public long? Id { get; set; }
+
+    private readonly Random rng = new();
+    private long? designId;
+    private bool unsaved;
+    private bool saving;
+    private long? loadedId;
+    private MandalaDocument doc = new();
+    private Layer? selected;
+    private AppSettings settings = new();
+    private string? fileName;
+    private bool showPrefs;
+    private string paper = "letter";
+    private string status = "Press ✦ Intricate for a new design.";
+
+    private string? cachedSvg;
+    private bool dirty = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        settings = AppSettings.FromJson(await JS.InvokeAsync<string?>("mandala.load", SettingsKey));
+        if (Id == null) SetDocument(RandomMandala.CreateIntricate(rng, 200, settings.Weight));
+    }
+
+    // Opening /d/{id} (from the gallery) loads that saved design
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Id is not long id || id == loadedId) return;
+        loadedId = id;
+        try
+        {
+            var all = await Api.ListAsync();
+            var summary = all.FirstOrDefault(d => d.Id == id);
+            SetDocument(MandalaDocument.FromJson(await Api.GetJsonAsync(id)));
+            designId = id;
+            fileName = summary?.Name ?? $"Design {id}";
+            unsaved = false;
+            status = "Opened from your saved designs.";
+        }
+        catch (Exception ex)
+        {
+            SetDocument(RandomMandala.CreateIntricate(rng, 200, settings.Weight));
+            status = $"Couldn't open that saved design ({ex.Message}), so here's a new one.";
+        }
+    }
+
+    // ---------- Preview ----------
+
+    private string PreviewSvg
+    {
+        get
+        {
+            if (dirty || cachedSvg == null)
+            {
+                string svg = SvgWriter.Export(doc, coloringPage: true);
+                int start = svg.IndexOf("<svg", StringComparison.Ordinal);
+                cachedSvg = svg.Substring(start);
+                dirty = false;
+            }
+            return cachedSvg;
+        }
+    }
+
+    private void SetDocument(MandalaDocument d)
+    {
+        doc.PropertyChanged -= OnChanged;
+        foreach (var l in doc.Layers) l.PropertyChanged -= OnChanged;
+        doc.Layers.CollectionChanged -= OnCollectionChanged;
+
+        doc = d;
+        doc.PropertyChanged += OnChanged;
+        foreach (var l in doc.Layers) l.PropertyChanged += OnChanged;
+        doc.Layers.CollectionChanged += OnCollectionChanged;
+        selected = doc.Layers.FirstOrDefault();
+        dirty = true;
+        unsaved = true;
+    }
+
+    private void OnChanged(object? sender, PropertyChangedEventArgs e) { dirty = true; unsaved = true; }
+
+    private void OnCollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems != null) foreach (Layer l in e.OldItems) l.PropertyChanged -= OnChanged;
+        if (e.NewItems != null) foreach (Layer l in e.NewItems) l.PropertyChanged += OnChanged;
+        dirty = true;
+        unsaved = true;
+    }
+
+    public void Dispose()
+    {
+        doc.PropertyChanged -= OnChanged;
+        foreach (var l in doc.Layers) l.PropertyChanged -= OnChanged;
+    }
+
+    // ---------- Generators ----------
+
+    private async Task NewIntricate()
+    {
+        if (!await ConfirmDiscard()) return;
+        SetDocument(RandomMandala.CreateIntricate(rng, doc.DiameterMm, settings.Weight));
+        StartFresh();
+        status = "New intricate mandala. Press ✦ Intricate again for another, or 🎲 Re-roll a layer you don't like.";
+    }
+
+    private async Task NewLineArt()
+    {
+        if (!await ConfirmDiscard()) return;
+        SetDocument(RandomMandala.CreateLineArt(rng, doc.DiameterMm, settings.Weight));
+        StartFresh();
+        status = "New line-art mandala.";
+    }
+
+    // ---------- Layers ----------
+
+    private void AddLayer()
+    {
+        var l = new Layer { Name = $"Layer {doc.Layers.Count + 1}", Radius = Math.Min((selected?.Radius ?? 15) + 15, doc.DiameterMm / 2) };
+        doc.Layers.Insert(Math.Max(0, selected == null ? 0 : doc.Layers.IndexOf(selected)), l);
+        selected = l;
+    }
+
+    private void DuplicateLayer()
+    {
+        if (selected == null) return;
+        var copy = selected.Clone();
+        copy.Name = selected.Name + " copy";
+        doc.Layers.Insert(doc.Layers.IndexOf(selected), copy);
+        selected = copy;
+    }
+
+    private void DeleteLayer()
+    {
+        if (selected == null) return;
+        int i = doc.Layers.IndexOf(selected);
+        doc.Layers.RemoveAt(i);
+        selected = doc.Layers.Count == 0 ? null : doc.Layers[Math.Min(i, doc.Layers.Count - 1)];
+    }
+
+    private void MoveLayer(int delta)
+    {
+        if (selected == null) return;
+        int i = doc.Layers.IndexOf(selected), j = i + delta;
+        if (j < 0 || j >= doc.Layers.Count) return;
+        doc.Layers.Move(i, j);
+    }
+
+    private void Reroll()
+    {
+        if (selected == null) return;
+        var before = selected.Shape;
+        status = RandomMandala.Reroll(selected, rng, settings.Weight, doc.DiameterMm)
+            ? $"Re-rolled \"{selected.Name}\": {Pretty(before.ToString())} → {Pretty(selected.Shape.ToString())}. Click again for another option."
+            : $"\"{selected.Name}\" is a plain ring, so there's nothing to re-roll.";
+        dirty = true;
+    }
+
+    // ---------- Files ----------
+
+    private void StartFresh()
+    {
+        designId = null;
+        fileName = null;
+        if (Id != null) Nav.NavigateTo("", replace: false);
+        loadedId = null;
+    }
+
+    /// <summary>True if it's fine to replace the current design (no unsaved changes to a saved one, or the user agrees).</summary>
+    private async Task<bool> ConfirmDiscard()
+    {
+        if (!unsaved || designId == null) return true;
+        return await JS.InvokeAsync<bool>("mandala.confirm", $"\"{fileName}\" has unsaved changes. Leave without saving?");
+    }
+
+    private async Task SaveToDatabase()
+    {
+        saving = true;
+        try
+        {
+            string json = doc.ToJson(), svg = SvgWriter.Export(doc, coloringPage: true);
+            if (designId is long id)
+            {
+                await Api.UpdateAsync(id, null, json, svg);
+                status = "Saved changes.";
+            }
+            else
+            {
+                var created = await Api.CreateAsync(null, json, svg);
+                designId = created.Id;
+                fileName = created.Name;
+                loadedId = created.Id;
+                Nav.NavigateTo($"d/{created.Id}", replace: true);
+                status = $"Saved as {created.Name}. Find it any time in 🖼 Gallery.";
+            }
+            unsaved = false;
+        }
+        catch (Exception ex) { status = "Couldn't save: " + ex.Message; }
+        saving = false;
+    }
+
+    private async Task SaveAsNew()
+    {
+        designId = null;
+        await SaveToDatabase();
+    }
+
+    private async Task GoToBatch()
+    {
+        if (!await ConfirmDiscard()) return;
+        Nav.NavigateTo("batch");
+    }
+
+    private async Task GoToGallery()
+    {
+        if (!await ConfirmDiscard()) return;
+        Nav.NavigateTo("gallery");
+    }
+
+    private async Task DownloadMandala()
+    {
+        string name = fileName ?? "mandala";
+        await JS.InvokeVoidAsync("mandala.download", name + ".mandala", "application/json", doc.ToJson());
+        status = $"Downloaded {name}.mandala.";
+    }
+
+    private async Task DownloadSvg()
+    {
+        string name = fileName ?? "mandala";
+        await JS.InvokeVoidAsync("mandala.download", name + ".svg", "image/svg+xml", SvgWriter.Export(doc, coloringPage: true));
+        status = $"Downloaded {name}.svg ({doc.DiameterMm:0.#} mm).";
+    }
+
+    private sealed record OpenedFile(string Name, string Text);
+
+    private async Task OpenFile()
+    {
+        var file = await JS.InvokeAsync<OpenedFile?>("mandala.openText", ".mandala,application/json");
+        if (file == null) return;
+        try
+        {
+            SetDocument(MandalaDocument.FromJson(file.Text));
+            StartFresh();
+            status = $"Opened {file.Name}. Press 💾 Save to add it to your saved designs.";
+        }
+        catch (Exception ex)
+        {
+            status = $"Couldn't open {file.Name}: {ex.Message}";
+        }
+    }
+
+    // ---------- Printing ----------
+
+    private async Task PrintCurrent()
+    {
+        await JS.InvokeVoidAsync("mandala.printPages", new[] { SvgWriter.Export(doc, coloringPage: true) }, paper, false);
+        status = "Opened the print dialog. Choose \"Save as PDF\" to make a PDF.";
+    }
+
+    // ---------- Shape preferences ----------
+
+    private async Task SetPref(ShapeKind kind, ShapePreference p)
+    {
+        settings.ShapePreferences[kind] = p;
+        await JS.InvokeVoidAsync("mandala.save", SettingsKey, settings.ToJson());
+    }
+
+    private async Task ResetPrefs()
+    {
+        settings.ShapePreferences.Clear();
+        await JS.InvokeVoidAsync("mandala.save", SettingsKey, settings.ToJson());
+    }
+
+    private void ClosePrefs() => showPrefs = false;
+
+    // ---------- Helpers ----------
+
+    private static string Pretty(string name) =>
+        System.Text.RegularExpressions.Regex.Replace(name, "(?<=[a-z])(?=[A-Z])", " ");
+
+}
