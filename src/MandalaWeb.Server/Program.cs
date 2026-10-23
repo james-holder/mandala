@@ -46,6 +46,17 @@ api.MapPut("/{id:long}/name", (long id, RenameRequest req, DesignStore s) =>
     s.Rename(id, req.Name) ? Results.Ok() : Results.BadRequest());
 api.MapDelete("/{id:long}", (long id, DesignStore s) =>
     s.Delete(id) ? Results.Ok() : Results.NotFound());
+api.MapPut("/move", (MoveRequest req, DesignStore s) =>
+    s.Move(req.Ids, req.FolderId) ? Results.Ok() : Results.NotFound());
+
+var folders = app.MapGroup("/api/folders");
+folders.MapGet("/", (DesignStore s) => s.Folders());
+folders.MapPost("/", (RenameRequest req, DesignStore s) =>
+    s.CreateFolder(req.Name) is { } f ? Results.Ok(f) : Results.BadRequest());
+folders.MapPut("/{id:long}/name", (long id, RenameRequest req, DesignStore s) =>
+    s.RenameFolder(id, req.Name) ? Results.Ok() : Results.BadRequest());
+folders.MapDelete("/{id:long}", (long id, DesignStore s) =>
+    s.DeleteFolder(id) ? Results.Ok() : Results.NotFound());
 
 // Local testing only: lets a test script save a generated file to disk for inspection. Never on in production.
 if (app.Environment.IsDevelopment() && Environment.GetEnvironmentVariable("MANDALA_TEST_OUT") is { Length: > 0 } testOut)
@@ -66,3 +77,4 @@ app.MapFallbackToFile("index.html", new StaticFileOptions
 app.Run();
 
 record RenameRequest(string Name);
+record MoveRequest(long[] Ids, long? FolderId);

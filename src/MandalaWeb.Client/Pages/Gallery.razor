@@ -12,8 +12,13 @@
         <a class="button" href="batch">▦ Batch</a>
     </div>
     <div class="group">
-        <button @onclick="SelectAll" title="Select every design, oldest first">Select all</button>
+        <button @onclick="SelectAll" title="Select every design in this folder, oldest first">Select all</button>
         <button @onclick="SelectNone">Select none</button>
+        <select class="move-to" value="" @onchange="MoveSelected" disabled="@(order.Count == 0)" title="Move the selected designs into a folder">
+            <option value="">Move @order.Count selected to…</option>
+            @foreach (var f in folders) { <option value="@f.Id">📁 @f.Name</option> }
+            <option value="none">Unfiled</option>
+        </select>
     </div>
     <span class="count">@designs.Count saved · @order.Count selected</span>
 </header>
@@ -184,14 +189,53 @@
     }
     else
     {
+        <div class="library">
+        <aside class="folders">
+            <h3>Folders</h3>
+            <div class="folder @(viewAll ? "active" : "")" @onclick="() => View(null, true)">🗂 All designs <span>@designs.Count</span></div>
+            <div class="folder @(!viewAll && viewFolder == null ? "active" : "") @(dropTarget == 0 ? "drop" : "")" @onclick="() => View(null, false)"
+                 @ondragover="() => dropTarget = 0" @ondragover:preventDefault="true" @ondragleave="() => dropTarget = null" @ondrop="() => DropOn(null)">
+                📄 Unfiled <span>@designs.Count(d => d.FolderId == null)</span>
+            </div>
+            @foreach (var f in folders)
+            {
+                var folder = f;
+                @if (renamingFolderId == folder.Id)
+                {
+                    <div class="rename">
+                        <input @bind="folderText" @onkeydown="e => FolderRenameKey(e, folder)" />
+                        <button @onclick="() => SaveFolderRename(folder)">✓</button>
+                    </div>
+                }
+                else
+                {
+                    <div class="folder @(!viewAll && viewFolder == folder.Id ? "active" : "") @(dropTarget == folder.Id ? "drop" : "")" @onclick="() => View(folder.Id, false)"
+                         @ondragover="() => dropTarget = folder.Id" @ondragover:preventDefault="true" @ondragleave="() => dropTarget = null" @ondrop="() => DropOn(folder.Id)">
+                        📁 <span class="name" title="@folder.Name">@folder.Name</span> <span>@designs.Count(d => d.FolderId == folder.Id)</span>
+                        <button class="mini" title="Rename" @onclick="() => StartFolderRename(folder)" @onclick:stopPropagation="true">✎</button>
+                        <button class="mini" title="Delete folder (its designs go back to Unfiled)" @onclick="() => DeleteFolder(folder)" @onclick:stopPropagation="true">✕</button>
+                    </div>
+                }
+            }
+            <div class="rename new-folder">
+                <input @bind="newFolder" @bind:event="oninput" @onkeydown="NewFolderKey" placeholder="New folder name" />
+                <button @onclick="CreateFolder" disabled="@string.IsNullOrWhiteSpace(newFolder)" title="Make the folder">+</button>
+            </div>
+            <p class="help">Drag designs onto a folder to file them. Drag one that's selected to move all @order.Count selected.</p>
+        </aside>
         <div class="cards">
-            @foreach (var d in designs)
+            @if (!Visible.Any())
+            {
+                <p class="message">Nothing in this folder yet. Drag designs onto it from 🗂 All designs or 📄 Unfiled.</p>
+            }
+            @foreach (var d in Visible)
             {
                 var design = d;
                 int position = order.IndexOf(design.Id);
-                <div class="card @(position >= 0 ? "chosen" : "")">
+                <div class="card @(position >= 0 ? "chosen" : "") @(dragging.Contains(design.Id) ? "dragging" : "")" draggable="true"
+                     @ondragstart="() => StartDrag(design.Id)" @ondragend="EndDrag">
                     <div class="thumb" @onclick="() => Toggle(design.Id)">
-                        <img src="api/designs/@design.Id/svg?v=@design.UpdatedUtc.Ticks" alt="@design.Name" loading="lazy" />
+                        <img src="api/designs/@design.Id/svg?v=@design.UpdatedUtc.Ticks" alt="@design.Name" loading="lazy" draggable="false" />
                         @if (position >= 0) { <span class="badge">@(position + 1)</span> }
                         else { <span class="badge empty"></span> }
                     </div>
@@ -206,13 +250,14 @@
                     {
                         <div class="title" title="Click to rename" @onclick="() => StartRename(design)">@design.Name</div>
                     }
-                    <div class="meta">@design.UpdatedUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</div>
+                    <div class="meta">@design.UpdatedUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt")@if (viewAll && FolderName(design.FolderId) is string fn) {<span> · 📁 @fn</span>}</div>
                     <div class="actions">
                         <button @onclick='() => Nav.NavigateTo($"d/{design.Id}")'>Open</button>
                         <button @onclick="() => Delete(design)">Delete</button>
                     </div>
                 </div>
             }
+        </div>
         </div>
     }
 </main>
@@ -235,6 +280,17 @@
     private const double MinLineMm = 0.35; // KDP's minimum is 0.3 mm; this leaves a little room
 
     private List<DesignSummary> designs = new();
+    private List<FolderSummary> folders = new();
+    private bool viewAll = true;
+    private long? viewFolder;       // with viewAll false: the folder shown, or null for Unfiled
+    private long? dropTarget;       // folder being dragged over (0 = Unfiled), for highlighting
+    private List<long> dragging = new();
+    private string newFolder = "";
+    private long? renamingFolderId;
+    private string folderText = "";
+
+    private IEnumerable<DesignSummary> Visible => viewAll ? designs : designs.Where(d => d.FolderId == viewFolder);
+    private string? FolderName(long? id) => id is long f ? folders.FirstOrDefault(x => x.Id == f)?.Name : null;
     private readonly List<long> order = new(); // selected designs, in book order
     private bool loading = true;
     private bool busy;
@@ -278,7 +334,11 @@
 
     protected override async Task OnInitializedAsync()
     {
-        try { designs = await Api.ListAsync(); }
+        try
+        {
+            designs = await Api.ListAsync();
+            folders = await Api.FoldersAsync();
+        }
         catch (Exception ex) { message = "Couldn't load saved designs: " + ex.Message; }
         loading = false;
     }
@@ -294,12 +354,126 @@
     // Oldest first, which is usually the order designs were made in
     private void SelectAll()
     {
-        foreach (var d in designs.OrderBy(d => d.Id))
+        foreach (var d in Visible.OrderBy(d => d.Id))
             if (!order.Contains(d.Id)) order.Add(d.Id);
         coverDirty = true;
     }
 
     private void SelectNone() { order.Clear(); coverDirty = true; }
+
+    // ---------- Folders ----------
+
+    private void View(long? folder, bool all)
+    {
+        // A folder is usually one book, so its name becomes the file name unless one was typed
+        string? before = viewAll ? null : FolderName(viewFolder);
+        viewAll = all;
+        viewFolder = folder;
+        if (FolderName(folder) is string name && (prefix == "Mandalas" || prefix == before || string.IsNullOrWhiteSpace(prefix)))
+            prefix = name;
+    }
+
+    private void StartDrag(long id)
+    {
+        // Dragging a selected design takes the whole selection along
+        dragging = order.Contains(id) ? order.ToList() : new List<long> { id };
+    }
+
+    private void EndDrag()
+    {
+        dragging = new();
+        dropTarget = null;
+    }
+
+    private async Task DropOn(long? folderId)
+    {
+        var ids = dragging;
+        EndDrag();
+        await MoveTo(ids, folderId);
+    }
+
+    private async Task MoveSelected(ChangeEventArgs e)
+    {
+        string v = e.Value?.ToString() ?? "";
+        if (v == "") return;
+        await MoveTo(order.ToList(), v == "none" ? null : long.Parse(v));
+    }
+
+    private async Task MoveTo(List<long> ids, long? folderId)
+    {
+        ids = ids.Where(id => designs.Any(d => d.Id == id && d.FolderId != folderId)).ToList();
+        if (ids.Count == 0) return;
+        try
+        {
+            await Api.MoveAsync(ids, folderId);
+            for (int i = 0; i < designs.Count; i++)
+                if (ids.Contains(designs[i].Id)) designs[i] = designs[i] with { FolderId = folderId };
+            message = $"Moved {ids.Count} design{(ids.Count == 1 ? "" : "s")} to {FolderName(folderId) ?? "Unfiled"}.";
+        }
+        catch (Exception ex) { message = "Couldn't move: " + ex.Message; }
+    }
+
+    private async Task CreateFolder()
+    {
+        if (string.IsNullOrWhiteSpace(newFolder)) return;
+        try
+        {
+            var f = await Api.CreateFolderAsync(newFolder.Trim());
+            folders.Add(f);
+            folders.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+            newFolder = "";
+            message = $"Made folder {f.Name}. Drag designs onto it to file them.";
+        }
+        catch (Exception ex) { message = "Couldn't make the folder: " + ex.Message; }
+    }
+
+    private async Task NewFolderKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await CreateFolder();
+    }
+
+    private void StartFolderRename(FolderSummary f)
+    {
+        renamingFolderId = f.Id;
+        folderText = f.Name;
+    }
+
+    private async Task FolderRenameKey(KeyboardEventArgs e, FolderSummary f)
+    {
+        if (e.Key == "Enter") await SaveFolderRename(f);
+        else if (e.Key == "Escape") renamingFolderId = null;
+    }
+
+    private async Task SaveFolderRename(FolderSummary f)
+    {
+        renamingFolderId = null;
+        string name = CleanFileName(folderText);
+        if (name.Length == 0 || name == f.Name) return;
+        try
+        {
+            await Api.RenameFolderAsync(f.Id, name);
+            if (prefix == f.Name) prefix = name;
+            folders[folders.IndexOf(f)] = f with { Name = name };
+        }
+        catch (Exception ex) { message = "Couldn't rename the folder: " + ex.Message; }
+    }
+
+    private async Task DeleteFolder(FolderSummary f)
+    {
+        int count = designs.Count(d => d.FolderId == f.Id);
+        string note = count == 0 ? "" : $" Its {count} design{(count == 1 ? "" : "s")} won't be deleted; they'll go back to Unfiled.";
+        if (!await JS.InvokeAsync<bool>("mandala.confirm", $"Delete the folder \"{f.Name}\"?{note}")) return;
+        try
+        {
+            await Api.DeleteFolderAsync(f.Id);
+            folders.Remove(f);
+            for (int i = 0; i < designs.Count; i++)
+                if (designs[i].FolderId == f.Id) designs[i] = designs[i] with { FolderId = null };
+            if (!viewAll && viewFolder == f.Id) View(null, true);
+            message = $"Deleted folder {f.Name}.";
+        }
+        catch (Exception ex) { message = "Couldn't delete the folder: " + ex.Message; }
+    }
 
     private void Move(int index, int delta)
     {

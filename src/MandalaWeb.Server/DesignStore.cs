@@ -4,9 +4,13 @@ using Microsoft.Data.Sqlite;
 namespace MandalaWeb.Server;
 
 /// <summary>A saved design: its .mandala JSON plus a coloring-page SVG for thumbnails and PDF export.</summary>
-public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc);
+public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc, long? FolderId = null);
 
-public sealed record DesignUpload(string? Name, string Json, string Svg);
+/// <summary>FolderId is only used when a design is first saved; moving it later goes through Move.</summary>
+public sealed record DesignUpload(string? Name, string Json, string Svg, long? FolderId = null);
+
+/// <summary>A folder for organizing designs, such as one per book. Each design is in at most one folder.</summary>
+public sealed record FolderSummary(long Id, string Name);
 
 /// <summary>
 /// Saved designs in a SQLite file. On Fly.io the file lives on a volume (DESIGNS_DB points at it),
@@ -30,8 +34,25 @@ public sealed class DesignStore
                 CreatedUtc TEXT NOT NULL,
                 UpdatedUtc TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS Folders (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT NOT NULL,
+                CreatedUtc TEXT NOT NULL
+            );
             PRAGMA journal_mode = WAL;
             """);
+        // Databases from before folders existed get the new column
+        if (!HasColumn(db, "Designs", "FolderId"))
+            Exec(db, "ALTER TABLE Designs ADD COLUMN FolderId INTEGER NULL");
+    }
+
+    private static bool HasColumn(SqliteConnection db, string table, string column)
+    {
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = $"PRAGMA table_info({table})";
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) if (string.Equals(r.GetString(1), column, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 
     private SqliteConnection Open()
@@ -52,10 +73,12 @@ public sealed class DesignStore
     {
         using var db = Open();
         using var cmd = db.CreateCommand();
-        cmd.CommandText = "SELECT Id, Name, UpdatedUtc FROM Designs ORDER BY UpdatedUtc DESC";
+        cmd.CommandText = "SELECT Id, Name, UpdatedUtc, FolderId FROM Designs ORDER BY UpdatedUtc DESC";
         using var r = cmd.ExecuteReader();
         var result = new List<DesignSummary>();
-        while (r.Read()) result.Add(new DesignSummary(r.GetInt64(0), r.GetString(1), DateTime.Parse(r.GetString(2)).ToUniversalTime()));
+        while (r.Read())
+            result.Add(new DesignSummary(r.GetInt64(0), r.GetString(1), DateTime.Parse(r.GetString(2)).ToUniversalTime(),
+                r.IsDBNull(3) ? null : r.GetInt64(3)));
         return result;
     }
 
@@ -100,15 +123,17 @@ public sealed class DesignStore
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO Designs (Name, Json, Svg, CreatedUtc, UpdatedUtc) VALUES ($name, $json, $svg, $now, $now);
+            INSERT INTO Designs (Name, Json, Svg, CreatedUtc, UpdatedUtc, FolderId) VALUES ($name, $json, $svg, $now, $now, $folder);
             SELECT last_insert_rowid();
             """;
+        long? folder = upload.FolderId is long f && FolderExists(db, f) ? f : null;
+        cmd.Parameters.AddWithValue("$folder", (object?)folder ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$name", name);
         cmd.Parameters.AddWithValue("$json", upload.Json);
         cmd.Parameters.AddWithValue("$svg", upload.Svg);
         cmd.Parameters.AddWithValue("$now", now);
         long id = (long)cmd.ExecuteScalar()!;
-        return new DesignSummary(id, name, DateTime.Parse(now).ToUniversalTime());
+        return new DesignSummary(id, name, DateTime.Parse(now).ToUniversalTime(), folder);
     }
 
     public bool Update(long id, DesignUpload upload)
@@ -147,6 +172,86 @@ public sealed class DesignStore
         cmd.CommandText = "DELETE FROM Designs WHERE Id = $id";
         cmd.Parameters.AddWithValue("$id", id);
         return cmd.ExecuteNonQuery() > 0;
+    }
+
+    // ---------- Folders ----------
+
+    public List<FolderSummary> Folders()
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT Id, Name FROM Folders ORDER BY Name COLLATE NOCASE";
+        using var r = cmd.ExecuteReader();
+        var result = new List<FolderSummary>();
+        while (r.Read()) result.Add(new FolderSummary(r.GetInt64(0), r.GetString(1)));
+        return result;
+    }
+
+    private static bool FolderExists(SqliteConnection db, long id)
+    {
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM Folders WHERE Id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        return cmd.ExecuteScalar() != null;
+    }
+
+    public FolderSummary? CreateFolder(string name)
+    {
+        string? clean = Clean(name);
+        if (clean == null) return null;
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "INSERT INTO Folders (Name, CreatedUtc) VALUES ($name, $now); SELECT last_insert_rowid();";
+        cmd.Parameters.AddWithValue("$name", clean);
+        cmd.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O"));
+        return new FolderSummary((long)cmd.ExecuteScalar()!, clean);
+    }
+
+    public bool RenameFolder(long id, string name)
+    {
+        string? clean = Clean(name);
+        if (clean == null) return false;
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "UPDATE Folders SET Name = $name WHERE Id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.Parameters.AddWithValue("$name", clean);
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
+    /// <summary>Deletes a folder. Its designs aren't deleted; they go back to Unfiled.</summary>
+    public bool DeleteFolder(long id)
+    {
+        using var db = Open();
+        using var tx = db.BeginTransaction();
+        using var move = db.CreateCommand();
+        move.CommandText = "UPDATE Designs SET FolderId = NULL WHERE FolderId = $id";
+        move.Parameters.AddWithValue("$id", id);
+        move.ExecuteNonQuery();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "DELETE FROM Folders WHERE Id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        bool deleted = cmd.ExecuteNonQuery() > 0;
+        tx.Commit();
+        return deleted;
+    }
+
+    /// <summary>Moves designs into a folder, or to Unfiled when folderId is null. False if the folder doesn't exist.</summary>
+    public bool Move(IEnumerable<long> designIds, long? folderId)
+    {
+        using var db = Open();
+        if (folderId is long f && !FolderExists(db, f)) return false;
+        using var tx = db.BeginTransaction();
+        foreach (long id in designIds)
+        {
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "UPDATE Designs SET FolderId = $folder WHERE Id = $id";
+            cmd.Parameters.AddWithValue("$id", id);
+            cmd.Parameters.AddWithValue("$folder", (object?)folderId ?? DBNull.Value);
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+        return true;
     }
 
     /// <summary>Trims a name and removes characters that can't go in a file name. Null if nothing is left.</summary>

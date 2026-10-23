@@ -39,6 +39,12 @@
         <button @onclick="SelectNone" disabled="@(busy || PickedCount == 0)">Select none</button>
         <button @onclick="ReplaceUnpicked" disabled="@(busy || items.Count == 0 || items.All(i => i.Picked || i.SavedId != null))"
                 title="Keep the ones you've picked and make new designs in place of the rest">↻ Replace the rest</button>
+        <label class="inline">Save into
+            <select @bind="saveFolder" disabled="@busy" title="Folder for the designs you save">
+                <option value="0">Unfiled</option>
+                @foreach (var f in folders) { <option value="@f.Id">📁 @f.Name</option> }
+            </select>
+        </label>
         <button class="accent" @onclick="SavePicked" disabled="@(busy || PickedCount == 0)">💾 Save @PickedCount picked</button>
     </div>
 </header>
@@ -128,6 +134,8 @@
     private readonly Random rng = new();
     private readonly List<Item> items = new();
     private AppSettings settings = new();
+    private List<FolderSummary> folders = new();
+    private long saveFolder; // 0 = Unfiled
     private string style = "intricate";
     private Difficulty difficulty = Difficulty.Intricate;
     private int howMany = 12;
@@ -213,6 +221,7 @@
     protected override async Task OnInitializedAsync()
     {
         settings = AppSettings.FromJson(await JS.InvokeAsync<string?>("mandala.load", SettingsKey));
+        try { folders = await Api.FoldersAsync(); } catch (Exception) { } // saving still works without folders
     }
 
     private Item Make()
@@ -276,7 +285,7 @@
     {
         try
         {
-            var created = await Api.CreateAsync(null, item.Doc.ToJson(), item.Svg);
+            var created = await Api.CreateAsync(null, item.Doc.ToJson(), item.Svg, saveFolder == 0 ? null : saveFolder);
             item.SavedId = created.Id;
             item.Name = created.Name;
             item.Picked = false;
@@ -304,7 +313,7 @@
         if (saved > 0)
         {
             var names = picked.Where(p => p.SavedId != null).Select(p => p.Name).ToList();
-            message = $"Saved {saved} design{(saved == 1 ? "" : "s")} ({names.First()}{(names.Count > 1 ? $" to {names.Last()}" : "")}). They're in 🖼 Gallery.";
+            message = $"Saved {saved} design{(saved == 1 ? "" : "s")} ({names.First()}{(names.Count > 1 ? $" to {names.Last()}" : "")}). They're in 🖼 Gallery{(saveFolder != 0 && folders.FirstOrDefault(f => f.Id == saveFolder) is { } sf ? $", in the {sf.Name} folder" : "")}.";
         }
     }
 

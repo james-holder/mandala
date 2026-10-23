@@ -260,3 +260,11 @@ window.mandala = {
         }, 300);
     },
 };
+
+// Firefox only starts a drag when some data is attached, which Blazor's drag events don't do
+document.addEventListener("dragstart", e => {
+    if (e.target && e.target.closest && e.target.closest(".card[draggable=true]") && e.dataTransfer) {
+        e.dataTransfer.setData("text/plain", "");
+        e.dataTransfer.effectAllowed = "move";
+    }
+});
