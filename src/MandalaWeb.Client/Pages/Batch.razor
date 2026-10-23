@@ -108,7 +108,7 @@
     private Item Make()
     {
         var doc = style == "lineart"
-            ? RandomMandala.CreateLineArt(rng, 200, settings.Weight)
+            ? RandomMandala.CreateLineArt(rng, 200, settings.Weight, difficulty)
             : RandomMandala.CreateIntricate(rng, 200, settings.Weight, difficulty);
         string svg = SvgWriter.Export(doc, coloringPage: true);
         return new Item { Doc = doc, Svg = svg, DataUrl = "data:image/svg+xml;charset=utf-8," + Uri.EscapeDataString(svg) };

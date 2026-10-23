@@ -208,15 +208,16 @@ window.mandalaCover = (() => {
             return { widthIn: g.width, heightIn: g.height, spineIn: g.spine };
         },
         // 300 DPI PDF at the exact full-cover size, no guides
-        async exportPdf(spec, fileName) {
+        async exportPdf(spec, fileName, preview) {
             const g = geometry(spec);
             const canvas = document.createElement("canvas");
             await draw(canvas, spec, 300, false);
             const { jsPDF } = window.jspdf;
             const pdf = new jsPDF({ unit: "in", format: [g.width, g.height], orientation: "landscape", compress: true });
             pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, g.width, g.height, undefined, "FAST");
+            if (preview) return { widthIn: g.width, heightIn: g.height, spineIn: g.spine, url: mandala.previewUrl(pdf) };
             pdf.save(`${fileName}.pdf`);
-            return { widthIn: g.width, heightIn: g.height, spineIn: g.spine };
+            return { widthIn: g.width, heightIn: g.height, spineIn: g.spine, url: null };
         },
     };
 })();

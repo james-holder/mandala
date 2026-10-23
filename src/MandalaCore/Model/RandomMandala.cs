@@ -39,14 +39,16 @@ public static class RandomMandala
     /// shapes below. Detail (echoes, inner shapes, hatching) only goes on motifs big enough to color in.
     /// Only the border and its backing ring are filled (in white), so the silhouette laser modes can cut the piece out.
     /// </summary>
-    public static MandalaDocument CreateLineArt(Random rng, double diameter = 200, Func<ShapeKind, double>? weight = null)
+    /// <param name="difficulty">Simple: fewer, bigger spaces and bolder lines. Medium: in between. Intricate: the full detail.</param>
+    public static MandalaDocument CreateLineArt(Random rng, double diameter = 200, Func<ShapeKind, double>? weight = null,
+        Difficulty difficulty = Difficulty.Intricate)
     {
         weight ??= k => AppSettings.WeightOf(AppSettings.DefaultPreference(k));
         var doc = new MandalaDocument
         {
             DiameterMm = diameter, BackgroundColor = "#FFFFFF", NoFill = true, LaserMode = LaserMode.Raw,
         };
-        var g = new LineArtBuilder(rng, weight, diameter / 2 * 0.95);
+        var g = new LineArtBuilder(rng, weight, diameter / 2 * 0.95, difficulty);
         foreach (var l in g.Build()) doc.Layers.Add(l);
         return doc;
     }
@@ -90,14 +92,33 @@ public static class RandomMandala
         private readonly Func<ShapeKind, double> _weight;
         private readonly double _r;          // usable radius
         private readonly double _minFeature; // smallest motif worth drawing (about 4–5 mm on a 200 mm design)
+        private readonly Difficulty _level;
+        private readonly double _lineScale;  // bolder lines on easier pages
+        private readonly int _maxRepeat;     // how many times the symmetry may multiply in outer bands
         private int _n;
 
-        public LineArtBuilder(Random rng, Func<ShapeKind, double> weight, double radius)
+        // Fine ring patterns are hard to color, so easier pages leave them out
+        private static readonly ShapeKind[] FinePatterns =
+            { ShapeKind.Lattice, ShapeKind.Rope, ShapeKind.Stitch, ShapeKind.FlowerOfLife, ShapeKind.Chain, ShapeKind.GreekKey };
+
+        public LineArtBuilder(Random rng, Func<ShapeKind, double> weight, double radius, Difficulty level = Difficulty.Intricate)
         {
             _rng = rng;
-            _weight = weight;
+            _level = level;
+            _weight = level switch
+            {
+                Difficulty.Intricate => weight,
+                // Sunflowers and snowflakes are dense even when large
+                Difficulty.Simple => k => Array.IndexOf(FinePatterns, k) >= 0 || k is ShapeKind.Sunflower or ShapeKind.Snowflake ? 0 : weight(k),
+                _ => k => Array.IndexOf(FinePatterns, k) >= 0 && k != ShapeKind.Chain ? 0 : weight(k),
+            };
             _r = radius;
-            _minFeature = radius * 0.045;
+            (_minFeature, _lineScale, _maxRepeat) = level switch
+            {
+                Difficulty.Simple => (radius * 0.1, 1.6, 2),
+                Difficulty.Medium => (radius * 0.065, 1.25, 4),
+                _ => (radius * 0.045, 1.0, 8),
+            };
         }
 
         private bool Chance(double p) => _rng.NextDouble() < p;
@@ -116,7 +137,9 @@ public static class RandomMandala
         private bool Fits(ShapeKind k, double length, double width)
         {
             if (Array.IndexOf(PictureShapes, k) < 0) return true;
-            if (Math.Min(length, width) < _r * 0.14) return false;
+            // Easier pages need more room for the same picture, so its spaces stay big enough to color
+            double need = _level switch { Difficulty.Simple => 0.24, Difficulty.Medium => 0.18, _ => 0.14 };
+            if (Math.Min(length, width) < _r * need) return false;
             return k switch
             {
                 ShapeKind.Butterfly or ShapeKind.Dragonfly => width >= length * 0.75,
@@ -138,7 +161,7 @@ public static class RandomMandala
         {
             Name = name, Shape = kind, Count = count, Radius = Math.Round(radius, 2),
             Length = Math.Round(length, 2), Width = Math.Round(width, 2),
-            Filled = false, StrokeColor = Ink, StrokeWidth = stroke, FillColor = "#FFFFFF", Tweak = 0.5,
+            Filled = false, StrokeColor = Ink, StrokeWidth = Math.Round(stroke * _lineScale, 2), FillColor = "#FFFFFF", Tweak = 0.5,
         };
 
         private static double Spacing(double radius, int count) => 2 * Math.PI * radius / count;
@@ -150,14 +173,19 @@ public static class RandomMandala
         private int CountFor(double radius, double targetSpacing)
         {
             int k = 1;
-            while (k < 8 && Spacing(radius, _n * k) > targetSpacing) k++;
+            while (k < _maxRepeat && Spacing(radius, _n * k) > targetSpacing) k++;
             while (k > 1 && Spacing(radius, _n * k) < _minFeature) k--;
             return _n * k;
         }
 
         public List<Layer> Build()
         {
-            _n = new[] { 8, 10, 12, 12, 16 }[_rng.Next(5)];
+            _n = _level switch
+            {
+                Difficulty.Simple => new[] { 6, 8 }[_rng.Next(2)],
+                Difficulty.Medium => new[] { 8, 10, 12 }[_rng.Next(3)],
+                _ => new[] { 8, 10, 12, 12, 16 }[_rng.Next(5)],
+            };
             var front = new List<Layer>();
             var rings = new List<Layer>();
 
@@ -165,7 +193,7 @@ public static class RandomMandala
             double borderStart = _r * (0.76 + _rng.NextDouble() * 0.07);
 
             // 3–5 bands between the center disc and the border, with varied heights
-            int bandCount = _rng.Next(3, 6);
+            int bandCount = _level switch { Difficulty.Simple => _rng.Next(2, 4), Difficulty.Medium => _rng.Next(3, 5), _ => _rng.Next(3, 6) };
             var heights = new double[bandCount];
             for (int i = 0; i < bandCount; i++) heights[i] = 0.7 + _rng.NextDouble();
             double sum = 0;
@@ -187,7 +215,7 @@ public static class RandomMandala
             if (_weight(ShapeKind.Ring) > 0)
                 for (int i = 0; i < edges.Count; i++)
                 {
-                    bool bold = i == 0 || (i == edges.Count - 1 && Chance(0.5)) || Chance(0.15);
+                    bool bold = i == 0 || i == edges.Count - 1 && Chance(0.5) || Chance(0.15);
                     var ring = Make(i == edges.Count - 1 ? "Border ring" : $"Ring {i}", ShapeKind.Ring, 1, edges[i], 0, 0, bold ? 0.9 : 0.5);
                     rings.Add(ring);
                 }
@@ -207,6 +235,7 @@ public static class RandomMandala
         private void AddCenter(List<Layer> layers, double c)
         {
             double style = _rng.NextDouble();
+            if (_level == Difficulty.Simple && style >= 0.4 && style < 0.7) style = 0.8;
             if (style < 0.4 && PickFrom(new[] { ShapeKind.Petal, ShapeKind.Eye, ShapeKind.Leaf, ShapeKind.Teardrop }) is ShapeKind petal)
             {
                 // Petals from the center to the center ring
@@ -224,7 +253,7 @@ public static class RandomMandala
             {
                 var l = Make("Center", solo, 1, 0, c * 1.8, c * 1.8);
                 l.Tweak = solo == ShapeKind.Gem ? (_n % 8 == 0 ? 0.6 : 0.4) : 0.45;
-                if (Chance(0.6)) { l.InsetCount = 1; l.InsetGap = 0.25; }
+                if (_level != Difficulty.Simple && Chance(0.6)) { l.InsetCount = 1; l.InsetGap = 0.25; }
                 layers.Add(l);
             }
         }
@@ -324,6 +353,28 @@ public static class RandomMandala
             double size = Math.Min(l.Length, l.Width);
             bool round = Array.IndexOf(RoundShapes, l.Shape) >= 0;
 
+            if (_level == Difficulty.Simple)
+            {
+                // At most one roomy detail, only on big shapes
+                if (size > _r * 0.18 && Chance(0.5))
+                {
+                    if (Chance(0.5)) { l.InsetCount = 1; l.InsetGap = 0.25; }
+                    else { l.Inner = InnerMotif.Circle; l.InnerSize = round ? 0.45 : 0.35; l.InnerOffset = round ? 0 : 0.15; }
+                }
+                return;
+            }
+            if (_level == Difficulty.Medium)
+            {
+                if (size > _r * 0.12)
+                {
+                    double roll = _rng.NextDouble();
+                    if (roll < 0.4) { l.InsetCount = 1; l.InsetGap = round ? 0.28 : 0.2; }
+                    else if (roll < 0.75) SetInner(l, round);
+                    else if (!round && roll < 0.9) SetHatch(l);
+                }
+                return;
+            }
+
             if (size > _r * 0.15)
             {
                 if (Chance(0.7)) { l.InsetCount = 1; l.InsetGap = Math.Round(0.13 + _rng.NextDouble() * 0.05, 2); }
@@ -359,6 +410,7 @@ public static class RandomMandala
             var options = new[] { HatchStyle.Chevron, HatchStyle.Across, HatchStyle.Fan };
             l.Hatch = options[_rng.Next(options.Length)];
             l.HatchCount = l.Hatch == HatchStyle.Fan ? 7 : 5 + _rng.Next(3);
+            if (_level == Difficulty.Medium) l.HatchCount = Math.Max(3, l.HatchCount - 2);
         }
 
         private List<Layer> AddBorder(double start)
@@ -375,8 +427,8 @@ public static class RandomMandala
                 var l = Make("Border petals", kind, count, start + h / 2, h, s * 1.08, 0.6);
                 l.Filled = true;
                 l.OffsetHalfStep = Chance(0.5);
-                if (Chance(0.6)) { l.InsetCount = 1; l.InsetGap = 0.16; }
-                if (Chance(0.7))
+                if (_level != Difficulty.Simple && Chance(0.6)) { l.InsetCount = 1; l.InsetGap = 0.16; }
+                if (Chance(_level == Difficulty.Simple ? 0.4 : 0.7))
                 {
                     var inner = new[] { InnerMotif.Circle, InnerMotif.Bullseye, InnerMotif.Teardrop, InnerMotif.Heart, InnerMotif.Diamond };
                     l.Inner = inner[_rng.Next(inner.Length)];

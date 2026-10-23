@@ -19,6 +19,14 @@ entirely in the browser: designs are generated on your own computer, and nothing
 - **Print book** lets you pick several `.mandala` files and prints them one per page; choose "Save as PDF" in the print
   dialog for a PDF.
 
+## Making pages
+
+- **Detail** (Simple, Medium, Intricate) sets how busy new designs are, for both ✦ Mandala and ✏ Line art and on the
+  Batch page. Simple pages have fewer, bigger spaces and bolder lines.
+- Coloring pages are trimmed to the drawing, so a design fills the page inside the margins. Exports from the gallery
+  redraw each design from its saved data, so older designs get this too.
+- **👁 Preview** (design page, gallery export and KDP cover) shows the finished PDF in a pop-up before you download it.
+
 ## Running locally
 
 ```bash

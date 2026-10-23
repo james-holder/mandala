@@ -17,6 +17,13 @@ public static class SvgWriter
     public static string Export(MandalaDocument doc, bool coloringPage = false)
     {
         double d = doc.DiameterMm, r = d / 2;
+        // A coloring page is trimmed to the mandala itself (kept centered), so it fills the printed page
+        // inside the margins instead of floating in the middle of an oversized artboard
+        if (coloringPage && ContentRadius(doc) is double content && content > 1)
+        {
+            r = content;
+            d = 2 * r;
+        }
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
         sb.AppendLine($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{F(d)}mm\" height=\"{F(d)}mm\" viewBox=\"{F(-r)} {F(-r)} {F(d)} {F(d)}\">");
@@ -80,6 +87,33 @@ public static class SvgWriter
 
         sb.AppendLine("</svg>");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// How far the visible drawing reaches from the center, including half the thickest line, plus a hair of space.
+    /// Null if nothing is drawn.
+    /// </summary>
+    public static double? ContentRadius(MandalaDocument doc)
+    {
+        double reach = 0, stroke = 0;
+        bool any = false;
+        foreach (var layer in doc.Layers)
+        {
+            if (!layer.Visible) continue;
+            var (closed, open) = ShapeGenerator.BuildPathParts(layer);
+            foreach (string data in new[] { closed, open, ShapeGenerator.BuildDetailData(layer) })
+            {
+                if (string.IsNullOrWhiteSpace(data)) continue;
+                foreach (var line in Geom.PathData.ToPolylines(data, 0.2))
+                    foreach (var p in line)
+                    {
+                        reach = Math.Max(reach, Math.Max(Math.Abs(p.X), Math.Abs(p.Y)));
+                        any = true;
+                    }
+            }
+            stroke = Math.Max(stroke, layer.StrokeWidth);
+        }
+        return any ? reach + stroke / 2 + 0.5 : null;
     }
 
     private static string Opacity(string attr, double a) => a < 0.999 ? $" {attr}=\"{F(a)}\"" : "";

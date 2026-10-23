@@ -191,3 +191,10 @@ label.inline select { width: auto; }
 .tile-actions button { padding: 0.25rem 0.6rem; }
 .cover-start { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; padding: 0.6rem 0 0.2rem; }
 .cover-start p { margin: 0; flex-basis: 100%; font-size: 0.9rem; }
+
+/* ---------- PDF preview ---------- */
+.preview-modal { width: min(1100px, 96vw); height: 92vh; max-height: none; display: flex; flex-direction: column; padding: 0.8rem 1rem 1rem; }
+.preview-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; margin-bottom: 0.6rem; }
+.preview-head h3 { margin: 0; }
+.preview-head .help { flex: 1; margin: 0; }
+.preview-modal iframe { flex: 1; width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #525659; }

@@ -1,0 +1,30 @@
+@* A pop-up showing a finished PDF exactly as it will download, with a download button. *@
+@if (Url != null)
+{
+    <div class="modal-backdrop" @onclick="Close">
+        <div class="modal preview-modal" @onclick:stopPropagation="true">
+            <div class="preview-head">
+                <h3>@Title</h3>
+                <span class="help">@Note</span>
+                <div class="row end" style="margin:0">
+                    @if (Download.HasDelegate)
+                    {
+                        <button class="primary" @onclick="Download">⬇ Download PDF</button>
+                    }
+                    <button @onclick="Close">Close</button>
+                </div>
+            </div>
+            <iframe src="@Url" title="@Title"></iframe>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string? Url { get; set; }
+    [Parameter] public string Title { get; set; } = "Preview";
+    [Parameter] public string? Note { get; set; }
+    [Parameter] public EventCallback Download { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private Task Close() => OnClose.InvokeAsync();
+}

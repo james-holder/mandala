@@ -30,6 +30,7 @@
         <button @onclick="DownloadSvg" title="Download this design as an SVG coloring page">SVG</button>
         <button @onclick="DownloadMandala" title="Download the .mandala file (opens in the desktop app too)">.mandala</button>
         <button @onclick="OpenFile" title="Open a .mandala file from your computer">📂 Open file</button>
+        <button @onclick="PreviewPage" title="See this design on a printed page">👁 Preview</button>
         <button @onclick="PrintCurrent">🖨 Print</button>
         <button @onclick="() => showPrefs = true">★ Shapes</button>
     </div>
@@ -123,9 +124,9 @@
         <label>Paper for printing
             <select @bind="paper">
                 <option value="letter">Letter</option>
-                <option value="A4">A4</option>
+                <option value="a4">A4</option>
                 <option value="legal">Legal</option>
-                <option value="A5">A5</option>
+                <option value="a5">A5</option>
             </select>
         </label>
     </aside>
@@ -160,6 +161,9 @@
     </div>
 }
 
+<PdfPreview Url="@previewUrl" Title="@($"{fileName ?? "Mandala"} — page preview")" Note="@($"On {paper} paper with 0.5 in margins, as it prints.")"
+            Download="@(EventCallback.Factory.Create(this, DownloadPagePdf))" OnClose="() => previewUrl = null" />
+
 @code {
     private const string SettingsKey = "mandala.settings";
 
@@ -167,6 +171,25 @@
 
     private readonly Random rng = new();
     private Difficulty difficulty = Difficulty.Intricate;
+    private string? previewUrl;
+
+    private sealed record PdfPage(string Name, string Svg);
+
+    private PdfPage[] CurrentPage() => new[] { new PdfPage(fileName ?? "Mandala", SvgWriter.Export(doc, coloringPage: true)) };
+
+    private async Task PreviewPage()
+    {
+        try { previewUrl = await JS.InvokeAsync<string>("mandala.exportPdf", CurrentPage(), fileName ?? "mandala", paper, "single", false, true); }
+        catch (Exception ex) { status = "Preview failed: " + ex.Message; }
+    }
+
+    private async Task DownloadPagePdf()
+    {
+        previewUrl = null;
+        string name = fileName ?? "mandala";
+        await JS.InvokeVoidAsync("mandala.exportPdf", CurrentPage(), name, paper, "single", false, false);
+        status = $"Downloaded {name}.pdf.";
+    }
     private long? designId;
     private bool unsaved;
     private bool saving;
@@ -271,7 +294,7 @@
     private async Task NewLineArt()
     {
         if (!await ConfirmDiscard()) return;
-        SetDocument(RandomMandala.CreateLineArt(rng, doc.DiameterMm, settings.Weight));
+        SetDocument(RandomMandala.CreateLineArt(rng, doc.DiameterMm, settings.Weight, difficulty));
         StartFresh();
         status = "New line-art mandala.";
     }

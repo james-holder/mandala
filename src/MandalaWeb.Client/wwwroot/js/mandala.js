@@ -46,7 +46,9 @@ window.mandala = {
 
     // Real PDF files from SVG coloring pages (vector, so lines stay crisp at any size).
     // pages: [{ name, svg }]. mode "single" = one PDF with every page; "separate" = one PDF per design.
-    async exportPdf(pages, fileName, paper, mode, blankBacks) {
+    // preview = true returns a link to the finished PDF (to show on screen) instead of downloading it
+    async exportPdf(pages, fileName, paper, mode, blankBacks, preview) {
+        if (preview) mode = "single"; // preview everything in one document
         const { jsPDF } = window.jspdf;
         const sizes = { letter: [215.9, 279.4], legal: [215.9, 355.6], a4: [210, 297], a5: [148, 210] };
         const [pw, ph] = sizes[(paper || "letter").toLowerCase()] || sizes.letter;
@@ -81,11 +83,20 @@ window.mandala = {
                     await drawPage(pdf, pages[i].svg);
                     if (blankBacks) pdf.addPage([pw, ph], "portrait");
                 }
+                if (preview) return mandala.previewUrl(pdf);
                 pdf.save(`${fileName}.pdf`);
             }
         } finally {
             holder.remove();
         }
+        return null;
+    },
+
+    // A link to the PDF for an on-screen preview. The previous preview's link is released first.
+    previewUrl(pdf) {
+        if (mandala._lastPreview) URL.revokeObjectURL(mandala._lastPreview);
+        mandala._lastPreview = URL.createObjectURL(pdf.output("blob"));
+        return mandala._lastPreview + "#view=Fit";
     },
 
     // Makes sure no line prints thinner than minLineMm when the SVG is drawn sideMm wide.
@@ -182,11 +193,12 @@ window.mandala = {
                     await pdf.svg(el, { x: left + (areaW - side) / 2, y: topBottom + (areaH - side) / 2, width: side, height: side });
                 }
             }
+            if (opts.preview) return { pages: n, gutterIn, url: mandala.previewUrl(pdf) };
             pdf.save(`${fileName}.pdf`);
         } finally {
             holder.remove();
         }
-        return { pages: n, gutterIn };
+        return { pages: n, gutterIn, url: null };
     },
 
     confirm(message) {

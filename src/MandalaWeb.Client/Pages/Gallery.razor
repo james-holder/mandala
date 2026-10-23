@@ -50,6 +50,7 @@
         <label class="radio" title="Each design gets an empty back, so markers can't bleed through onto the next design">
             <input type="checkbox" @bind="blankBacks" disabled="@(mode == "separate")" /> Blank back after each design
         </label>
+        <button @onclick="PreviewBook" disabled="@(order.Count == 0 || busy)" title="See the PDF before downloading it">👁 Preview</button>
         <button class="primary" @onclick="Export" disabled="@(order.Count == 0 || busy)">
             @(busy ? "Making PDF…" : $"Export {order.Count} to PDF")
         </button>
@@ -75,7 +76,10 @@
         <section class="cover">
             <div class="cover-head">
                 <h3>Cover <small>back · spine · front, with bleed. Uses the title, subtitle and author above.</small></h3>
-                <button class="primary" @onclick="ExportCover" disabled="@(order.Count == 0 || busy)">@(busy ? "Working…" : "Export cover PDF")</button>
+                <div class="row" style="margin:0">
+                    <button @onclick="PreviewCover" disabled="@(order.Count == 0 || busy)">👁 Preview</button>
+                    <button class="primary" @onclick="ExportCover" disabled="@(order.Count == 0 || busy)">@(busy ? "Working…" : "Export cover PDF")</button>
+                </div>
             </div>
             @if (order.Count == 0)
             {
@@ -213,6 +217,8 @@
     }
 </main>
 
+<PdfPreview Url="@previewUrl" Title="@previewTitle" Note="@previewNote" Download="@previewDownload" OnClose="() => previewUrl = null" />
+
 @code {
     // Common KDP trim sizes for coloring books (inches)
     private static readonly Dictionary<string, (double W, double H)> TrimSizes = new()
@@ -262,6 +268,10 @@
     private string coverInfo = "";
     private string lastCoverKey = "";
     private readonly Dictionary<long, string> svgCache = new();
+    private string? previewUrl;
+    private string previewTitle = "";
+    private string? previewNote;
+    private EventCallback previewDownload;
     private string renameText = "";
 
     private string ExportName => string.IsNullOrWhiteSpace(prefix) ? "Mandalas" : CleanFileName(prefix);
@@ -332,9 +342,18 @@
 
     // ---------- Cover ----------
 
+    /// <summary>
+    /// The design's coloring page, drawn fresh from its saved data (not the stored thumbnail), so older designs
+    /// get the latest improvements, like being trimmed to fill the page.
+    /// </summary>
     private async Task<string> Svg(long id)
     {
-        if (!svgCache.TryGetValue(id, out var svg)) svgCache[id] = svg = await Api.GetSvgAsync(id);
+        if (!svgCache.TryGetValue(id, out var svg))
+        {
+            try { svg = SvgWriter.Export(MandalaDocument.FromJson(await Api.GetJsonAsync(id)), coloringPage: true); }
+            catch (Exception) { svg = await Api.GetSvgAsync(id); } // fall back to the stored picture
+            svgCache[id] = svg;
+        }
         return svg;
     }
 
@@ -355,7 +374,7 @@
         };
     }
 
-    private sealed record CoverSize(double WidthIn, double HeightIn, double SpineIn);
+    private sealed record CoverSize(double WidthIn, double HeightIn, double SpineIn, string? Url);
 
     private string CoverInfo(CoverSize size)
     {
@@ -389,7 +408,7 @@
         StateHasChanged();
         try
         {
-            var size = await JS.InvokeAsync<CoverSize>("mandalaCover.exportPdf", await CoverSpec(), ExportName + "-cover");
+            var size = await JS.InvokeAsync<CoverSize>("mandalaCover.exportPdf", await CoverSpec(), ExportName + "-cover", false);
             message = $"Exported {ExportName}-cover.pdf ({size.WidthIn:0.###} × {size.HeightIn:0.###} in, 300 DPI). Upload it as the paperback cover in KDP.";
             if (KdpPageCount() < 24) message += " Note: the book is under 24 pages, so the spine was sized for 24.";
         }
@@ -437,7 +456,70 @@
     // ---------- Export ----------
 
     private sealed record PdfPage(string Name, string Svg);
-    private sealed record KdpResult(int Pages, double GutterIn);
+    private sealed record KdpResult(int Pages, double GutterIn, string? Url);
+
+    private async Task<List<PdfPage>> BookPages()
+    {
+        var pages = new List<PdfPage>();
+        foreach (long id in order)
+            pages.Add(new PdfPage(designs.First(x => x.Id == id).Name, await Svg(id)));
+        return pages;
+    }
+
+    private object KdpOptions(bool preview)
+    {
+        var (w, h) = TrimSizes[trim];
+        return new
+        {
+            trimW = w, trimH = h,
+            title = title.Trim(), subtitle = subtitle.Trim(), author = author.Trim(),
+            belongsTo, blankBacks, minLineMm = MinLineMm, preview,
+        };
+    }
+
+    private async Task PreviewBook()
+    {
+        if (order.Count == 0) return;
+        busy = true;
+        message = null;
+        StateHasChanged();
+        try
+        {
+            var pages = await BookPages();
+            if (mode == "kdp")
+            {
+                var result = await JS.InvokeAsync<KdpResult>("mandala.exportKdp", pages, ExportName, KdpOptions(true));
+                previewUrl = result.Url;
+                previewNote = $"{result.Pages} pages at {trim} in. Blank backs and margins are shown exactly as they'll print.";
+            }
+            else
+            {
+                previewUrl = await JS.InvokeAsync<string>("mandala.exportPdf", pages, ExportName, paper, mode, blankBacks && mode == "single", true);
+                previewNote = mode == "separate" ? "Shown together here; the download is one PDF per design." : null;
+            }
+            previewTitle = $"{ExportName}.pdf";
+            previewDownload = EventCallback.Factory.Create(this, async () => { previewUrl = null; await Export(); });
+        }
+        catch (Exception ex) { message = "Preview failed: " + ex.Message; }
+        busy = false;
+    }
+
+    private async Task PreviewCover()
+    {
+        if (order.Count == 0) return;
+        busy = true;
+        StateHasChanged();
+        try
+        {
+            var size = await JS.InvokeAsync<CoverSize>("mandalaCover.exportPdf", await CoverSpec(), ExportName + "-cover", true);
+            previewUrl = size.Url;
+            previewTitle = $"{ExportName}-cover.pdf";
+            previewNote = $"{size.WidthIn:0.###} × {size.HeightIn:0.###} in with bleed. Back cover on the left, front on the right.";
+            previewDownload = EventCallback.Factory.Create(this, async () => { previewUrl = null; await ExportCover(); });
+        }
+        catch (Exception ex) { message = "Cover preview failed: " + ex.Message; }
+        busy = false;
+    }
 
     private async Task Export()
     {
@@ -447,27 +529,16 @@
         StateHasChanged();
         try
         {
-            var pages = new List<PdfPage>();
-            foreach (long id in order)
-            {
-                var d = designs.First(x => x.Id == id);
-                pages.Add(new PdfPage(d.Name, await Api.GetSvgAsync(id)));
-            }
+            var pages = await BookPages();
 
             if (mode == "kdp")
             {
-                var (w, h) = TrimSizes[trim];
-                var result = await JS.InvokeAsync<KdpResult>("mandala.exportKdp", pages, ExportName, new
-                {
-                    trimW = w, trimH = h,
-                    title = title.Trim(), subtitle = subtitle.Trim(), author = author.Trim(),
-                    belongsTo, blankBacks, minLineMm = MinLineMm,
-                });
+                var result = await JS.InvokeAsync<KdpResult>("mandala.exportKdp", pages, ExportName, KdpOptions(false));
                 message = $"Exported {ExportName}.pdf: a {result.Pages}-page KDP interior at {trim} in, ready to upload as the manuscript.";
             }
             else
             {
-                await JS.InvokeVoidAsync("mandala.exportPdf", pages, ExportName, paper, mode, blankBacks && mode == "single");
+                await JS.InvokeVoidAsync("mandala.exportPdf", pages, ExportName, paper, mode, blankBacks && mode == "single", false);
                 message = mode == "single"
                     ? $"Exported {pages.Count} design{(pages.Count == 1 ? "" : "s")} to {ExportName}.pdf."
                     : $"Exported {ExportName}_001.pdf to {ExportName}_{pages.Count:000}.pdf. (If your browser asks, allow multiple downloads.)";
