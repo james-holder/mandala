@@ -231,3 +231,6 @@ label.inline select { width: auto; }
     .library { grid-template-columns: 1fr; }
     .folders { position: static; }
 }
+
+button.danger { color: #b3261e; border-color: #e6b8b4; }
+button.danger:hover:not(:disabled) { background: #fdecea; }

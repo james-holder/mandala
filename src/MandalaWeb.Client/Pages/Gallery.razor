@@ -19,6 +19,7 @@
             @foreach (var f in folders) { <option value="@f.Id">📁 @f.Name</option> }
             <option value="none">Unfiled</option>
         </select>
+        <button class="danger" @onclick="DeleteSelected" disabled="@(order.Count == 0 || busy)" title="Delete the selected designs for good">🗑 Delete @order.Count selected</button>
     </div>
     <span class="count">@(FolderName(viewFolder) ?? "Unfiled"): @Visible.Count() designs · @order.Count selected</span>
 </header>
@@ -661,6 +662,31 @@
             message = $"Deleted {d.Name}.";
         }
         catch (Exception ex) { message = "Couldn't delete: " + ex.Message; }
+    }
+
+    private async Task DeleteSelected()
+    {
+        var doomed = designs.Where(d => order.Contains(d.Id)).ToList();
+        if (doomed.Count == 0) return;
+        string what = doomed.Count == 1 ? $"\"{doomed[0].Name}\"" : $"these {doomed.Count} designs";
+        if (!await JS.InvokeAsync<bool>("mandala.confirm", $"Delete {what}? This can't be undone.")) return;
+        busy = true;
+        int deleted = 0;
+        try
+        {
+            foreach (var d in doomed)
+            {
+                await Api.DeleteAsync(d.Id);
+                designs.Remove(d);
+                order.Remove(d.Id);
+                if (frontId == d.Id) frontId = null;
+                deleted++;
+            }
+            message = $"Deleted {deleted} design{(deleted == 1 ? "" : "s")}.";
+        }
+        catch (Exception ex) { message = $"Deleted {deleted}, then couldn't delete the rest: {ex.Message}"; }
+        coverDirty = true;
+        busy = false;
     }
 
     // ---------- Export ----------
