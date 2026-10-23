@@ -18,6 +18,13 @@
                 <option value="lineart">✏ Line art</option>
             </select>
         </label>
+        <label class="inline">Detail
+            <select @bind="difficulty" disabled="@busy">
+                <option value="Simple">Simple</option>
+                <option value="Medium">Medium</option>
+                <option value="Intricate">Intricate</option>
+            </select>
+        </label>
         <label class="inline">How many
             <select @bind="howMany" disabled="@busy">
                 <option value="6">6</option>
@@ -85,6 +92,7 @@
     private readonly List<Item> items = new();
     private AppSettings settings = new();
     private string style = "intricate";
+    private Difficulty difficulty = Difficulty.Intricate;
     private int howMany = 12;
     private bool busy;
     private int made, target;
@@ -101,7 +109,7 @@
     {
         var doc = style == "lineart"
             ? RandomMandala.CreateLineArt(rng, 200, settings.Weight)
-            : RandomMandala.CreateIntricate(rng, 200, settings.Weight);
+            : RandomMandala.CreateIntricate(rng, 200, settings.Weight, difficulty);
         string svg = SvgWriter.Export(doc, coloringPage: true);
         return new Item { Doc = doc, Svg = svg, DataUrl = "data:image/svg+xml;charset=utf-8," + Uri.EscapeDataString(svg) };
     }

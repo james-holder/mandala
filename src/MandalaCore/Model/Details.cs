@@ -52,3 +52,11 @@ public enum HatchStyle
     Chevron,  // leaf veins: a center line with angled ribs
     Fan,      // rays fanning out from the base
 }
+
+/// <summary>How detailed a generated design is.</summary>
+public enum Difficulty
+{
+    Simple,    // a few big layers, thick lines, no small decorations
+    Medium,
+    Intricate,
+}

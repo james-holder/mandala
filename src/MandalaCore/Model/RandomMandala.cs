@@ -484,9 +484,18 @@ public static class RandomMandala
     /// Every layer is filled white, so front layers hide what's behind them. That occlusion gives the layered depth
     /// and keeps overlaps from tangling. Picture motifs aren't used; this sticks to traditional mandala shapes.
     /// </summary>
-    public static MandalaDocument CreateIntricate(Random rng, double diameter = 200, Func<ShapeKind, double>? weight = null)
+    /// <param name="difficulty">
+    /// Simple: a few big layers, thick lines and no small decorations (kids, beginners, relaxing).
+    /// Medium: fewer layers and lighter decoration. Intricate: the full detailed style.
+    /// </param>
+    public static MandalaDocument CreateIntricate(Random rng, double diameter = 200, Func<ShapeKind, double>? weight = null,
+        Difficulty difficulty = Difficulty.Intricate)
     {
         weight ??= k => AppSettings.WeightOf(AppSettings.DefaultPreference(k));
+        bool simple = difficulty == Difficulty.Simple, medium = difficulty == Difficulty.Medium;
+        // Line weight: bolder for easier books, where wide outlines make coloring inside the lines easier
+        double line = simple ? 0.8 : medium ? 0.6 : 0.45;
+        double fine = simple ? 0.7 : medium ? 0.5 : 0.35;
         var doc = new MandalaDocument
         {
             DiameterMm = diameter, BackgroundColor = "#FFFFFF", NoFill = false, LaserMode = LaserMode.VisibleLines,
@@ -494,13 +503,15 @@ public static class RandomMandala
         const string ink = "#000000", paper = "#FFFFFF";
         double R = diameter / 2 * 0.95;
         // Base symmetry. Every petal and band count is a multiple of it, so all the layers line up.
-        int N = new[] { 8, 8, 12 }[rng.Next(3)];
+        int N = simple ? new[] { 6, 8 }[rng.Next(2)] : new[] { 8, 8, 12 }[rng.Next(3)];
         bool Chance(double p) => rng.NextDouble() < p;
 
-        Layer Make(string name, ShapeKind kind, int count, double radius, double length, double width, double stroke = 0.45) => new()
+        Layer Make(string name, ShapeKind kind, int count, double radius, double length, double width, double stroke = -1) => new()
         {
             Name = name, Shape = kind, Count = count, Radius = Math.Round(radius, 2), Length = Math.Round(length, 2), Width = Math.Round(width, 2),
-            Filled = true, FillColor = paper, StrokeColor = ink, StrokeWidth = stroke, Tweak = 0.5,
+            Filled = true, FillColor = paper, StrokeColor = ink,
+            // -1 = the difficulty's main line; thinner requested lines are kept proportionally thinner
+            StrokeWidth = stroke < 0 ? line : Math.Round(stroke / 0.45 * line, 2), Tweak = 0.5,
         };
 
         // Petal choice: respect "Never" in shape preferences, but bias toward the classic pointed forms
@@ -550,9 +561,12 @@ public static class RandomMandala
             var uses = new List<string>();
             if (Array.IndexOf(IntricateFavoritePetals, pick) >= 0) uses.Add("petal");
             if (Array.IndexOf(IntricateBeadShapes, pick) >= 0) uses.Add("bead");
-            if (pick is ShapeKind.Heart or ShapeKind.Star) uses.Add("accent");
-            featured = pick;
-            feature = uses[rng.Next(uses.Count)];
+            if (!simple && pick is ShapeKind.Heart or ShapeKind.Star) uses.Add("accent");
+            if (uses.Count > 0)
+            {
+                featured = pick;
+                feature = uses[rng.Next(uses.Count)];
+            }
         }
 
         var dots = new List<Layer>();   // drawn on top of everything
@@ -560,14 +574,15 @@ public static class RandomMandala
         var petals = new List<Layer>(); // inner layers first (in front), outer layers behind
 
         // ---- Center: a small flower on a disc, ringed with dots ----
-        double c = R * (0.2 + rng.NextDouble() * 0.05);
+        double c = R * (simple ? 0.24 + rng.NextDouble() * 0.04 : 0.2 + rng.NextDouble() * 0.05);
         var flowerKind = Chance(0.5) ? ShapeKind.Daisy : ShapeKind.Flower;
         if (weight(flowerKind) <= 0) flowerKind = flowerKind == ShapeKind.Daisy ? ShapeKind.Flower : ShapeKind.Daisy;
-        if (weight(ShapeKind.SwirlBand) > 0 && Chance(0.35))
+        if (simple) flowerKind = ShapeKind.Flower; // a daisy's many thin petals are fiddly for an easy book
+        if (weight(ShapeKind.SwirlBand) > 0 && Chance(simple ? 0.2 : 0.35))
         {
             // Pinwheel center: curved blades sweeping out from a small hub (the hub covers where the blades meet)
             center.Add(Make("Center hub", ShapeKind.Circle, 1, 0, c * 0.36, c * 0.36));
-            var swirl = Make("Center swirl", ShapeKind.SwirlBand, N, c * 0.55, c * 0.9, 0);
+            var swirl = Make("Center swirl", ShapeKind.SwirlBand, simple ? Math.Min(N, 6) : N, c * 0.55, c * 0.9, 0);
             swirl.Tweak = Math.Round(0.35 + rng.NextDouble() * 0.35, 2);
             center.Add(swirl);
         }
@@ -583,17 +598,17 @@ public static class RandomMandala
         var centerAccent = new[] { ShapeKind.Circle, ShapeKind.Teardrop, ShapeKind.Diamond }[rng.Next(3)];
         double ca = centerAccent == ShapeKind.Circle ? R * 0.028 : R * 0.05;
         var centerRing = Make("Center accents", centerAccent, N * 2, c + ca * 0.75 + R * 0.01, ca, centerAccent == ShapeKind.Circle ? ca : ca * 0.55, 0.35);
-        dots.Add(centerRing);
+        if (!simple) dots.Add(centerRing);
 
         // ---- The stack: petal layers, with one or two small decorative bands between them ----
         // Petal layers grow larger toward the outside. The bands (scallops or beads, at 2–4× the base count)
         // break up the rhythm, the way the round-scallop and dotted rings do in hand-drawn mandalas.
-        int layerCount = rng.Next(4, 7);
+        int layerCount = simple ? rng.Next(2, 4) : medium ? rng.Next(3, 5) : rng.Next(4, 7);
         var slots = new List<bool>();                // false = petal layer, true = band
         for (int i = 0; i < layerCount; i++) slots.Add(false);
-        slots.Insert(Chance(0.5) ? 0 : 1, true);
-        if (layerCount >= 5 && Chance(0.45)) slots.Insert(slots.Count - 2, true);
-        double bandH = R * (0.06 + rng.NextDouble() * 0.02);
+        if (!simple) slots.Insert(Chance(0.5) ? 0 : 1, true);
+        if (!simple && !medium && layerCount >= 5 && Chance(0.45)) slots.Insert(slots.Count - 2, true);
+        double bandH = R * (medium ? 0.08 + rng.NextDouble() * 0.02 : 0.06 + rng.NextDouble() * 0.02);
         int bandCount = slots.FindAll(s => s).Count;
 
         double tip = c;
@@ -629,7 +644,7 @@ public static class RandomMandala
             double mid = newTip - len / 2;
             // Few, big petals near the center. Further out, layers often double, but only if the petals stay wide enough to color.
             bool canDouble = 2 * Math.PI * mid / (N * 2) > R * 0.08;
-            int count = layer > 0 && canDouble && Chance(last ? 0.55 : 0.45) ? N * 2 : N;
+            int count = !simple && layer > 0 && canDouble && Chance(medium ? 0.3 : last ? 0.55 : 0.45) ? N * 2 : N;
             double spacing = 2 * Math.PI * mid / count;
             // The outer layer sets the edge style: pointed, rounded, or a scalloped rim behind it
             var kind = !last || edge == "scalloped" ? PickPetal(previous) : edge == "pointed" ? PickPointed() : PickRounded();
@@ -647,8 +662,10 @@ public static class RandomMandala
             // Nested echo outlines (the signature look), spaced so each band is wide enough to color,
             // plus a small accent inside the bigger petals
             double size = Math.Min(len, width);
-            l.InsetCount = size > R * 0.16 ? 2 : size > R * 0.08 ? 1 : 0;
-            l.InsetGap = Math.Round(0.18 + rng.NextDouble() * 0.05, 2);
+            l.InsetCount = simple ? (size > R * 0.22 ? 1 : 0)
+                         : medium ? (size > R * 0.12 ? 1 : 0)
+                         : size > R * 0.16 ? 2 : size > R * 0.08 ? 1 : 0;
+            l.InsetGap = Math.Round(simple ? 0.28 + rng.NextDouble() * 0.05 : 0.18 + rng.NextDouble() * 0.05, 2);
             // Dotted echoes for the delicate hand-drawn look: often a solid echo with a dot row inside it
             if (l.InsetCount >= 2)
             {
@@ -656,9 +673,9 @@ public static class RandomMandala
                 l.EchoStyle = Chance(0.65) ? EchoStyle.Mixed : EchoStyle.Lines;
                 l.EchoAccent = PickAccent();
             }
-            else if (l.InsetCount == 1) l.EchoStyle = Chance(0.5) ? AsStyle(PickAccent()) : EchoStyle.Lines;
+            else if (l.InsetCount == 1) l.EchoStyle = simple ? EchoStyle.Lines : Chance(medium ? 0.3 : 0.5) ? AsStyle(PickAccent()) : EchoStyle.Lines;
             // Fern-like fringe on some of the bigger petals
-            if (l.InsetCount >= 1 && size > R * 0.12 && kind != ShapeKind.Fan && Chance(0.22))
+            if (!simple && !medium && l.InsetCount >= 1 && size > R * 0.12 && kind != ShapeKind.Fan && Chance(0.22))
             {
                 l.EchoStyle = EchoStyle.Fringe;
                 l.InsetGap = Math.Max(l.InsetGap, 0.3); // a wider band, so the cells between ticks are big enough to color
@@ -668,12 +685,12 @@ public static class RandomMandala
             if (kind == ShapeKind.Heart && l.InsetCount > 0)
             {
                 // Separate pieces (dots, diamonds, leaves) simply leave a gap at the dip
-                l.InsetCount = 1;
+                l.InsetCount = simple ? 0 : 1;
                 l.EchoStyle = new[] { EchoStyle.Dots, EchoStyle.Diamonds, EchoStyle.Leaves }[rng.Next(3)];
             }
             // The accent sits in the middle of the innermost echo, sized to fit inside it, so it never crosses an echo line or dot row
             double room = l.InsetCount > 0 ? 1 - (l.InsetCount + (l.EchoStyle == EchoStyle.Lines ? 0 : 0.6)) * l.InsetGap : 0.8;
-            if (size > R * 0.1 && room > 0.3 && Chance(0.55))
+            if (size > R * (simple ? 0.2 : 0.1) && room > 0.3 && Chance(simple ? 0.35 : medium ? 0.35 : 0.55))
             {
                 var accents = new[] { InnerMotif.Teardrop, InnerMotif.Teardrop, InnerMotif.Diamond, InnerMotif.Diamond, InnerMotif.Circle, InnerMotif.Bullseye };
                 l.Inner = accents[rng.Next(accents.Length)];
@@ -682,7 +699,8 @@ public static class RandomMandala
                     l.Inner = fa == ShapeKind.Star ? InnerMotif.Star : InnerMotif.Heart;
                     feature = "done";
                 }
-                l.InnerSize = Math.Round(Math.Min(0.22, room * 0.4), 2);
+                if (simple) l.Inner = new[] { InnerMotif.Teardrop, InnerMotif.Circle, InnerMotif.Diamond }[rng.Next(3)]; // one big, easy shape
+                l.InnerSize = Math.Round(Math.Min(simple ? 0.3 : 0.22, room * (simple ? 0.5 : 0.4)), 2);
                 l.InnerOffset = 0;
             }
             // A fan's lobe lines are its detail. Echoes would stack copies of every lobe into a tangle, and an accent
@@ -696,7 +714,7 @@ public static class RandomMandala
             petals.Add(l);
 
             // Dots just beyond the tips of some layers
-            if (layer < layerCount - 1 && Chance(0.55))
+            if (!simple && layer < layerCount - 1 && Chance(medium ? 0.3 : 0.55))
             {
                 double dot = Math.Min(R * 0.03, spacing * 0.22);
                 // Tip accents: small diamonds or teardrops as often as dots
@@ -772,9 +790,9 @@ public static class RandomMandala
             var rim = Make("Edge – scallops", ShapeKind.Scallop, N * k, tip, depth * 0.95, 0, 0.5);
             rim.Tweak = 0.4;
             rim.OffsetHalfStep = (layerCount % 2) == 0; // scallops centered between the last layer's tips
-            rim.InsetCount = 1;
+            rim.InsetCount = simple ? 0 : 1;
             rim.InsetGap = Math.Round(0.35 * depth / Math.Max(depth * 0.95, 8), 3); // ring echoes step in by InsetGap × max(Length, 8) mm
-            rim.EchoStyle = Chance(0.6) ? AsStyle(PickAccent()) : EchoStyle.Lines;
+            rim.EchoStyle = !simple && !medium && Chance(0.6) ? AsStyle(PickAccent()) : EchoStyle.Lines;
             petals.Add(rim);
         }
 

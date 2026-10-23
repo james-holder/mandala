@@ -11,7 +11,12 @@
 <header class="toolbar">
     <div class="brand">Mandala Maker</div>
     <div class="group">
-        <button class="primary" @onclick="NewIntricate" title="Stacked petal layers with echoes and dots">✦ Intricate</button>
+        <select @bind="difficulty" title="How detailed new designs are" style="width:auto">
+            <option value="Simple">Simple</option>
+            <option value="Medium">Medium</option>
+            <option value="Intricate">Intricate</option>
+        </select>
+        <button class="primary" @onclick="NewIntricate" title="Stacked petal layers with echoes and dots">✦ Mandala</button>
         <button @onclick="NewLineArt" title="Banded line-art mandala">✏ Line art</button>
         <button @onclick="GoToBatch" title="Make a grid of designs and save the ones you like">▦ Batch</button>
     </div>
@@ -161,6 +166,7 @@
     [Parameter] public long? Id { get; set; }
 
     private readonly Random rng = new();
+    private Difficulty difficulty = Difficulty.Intricate;
     private long? designId;
     private bool unsaved;
     private bool saving;
@@ -257,7 +263,7 @@
     private async Task NewIntricate()
     {
         if (!await ConfirmDiscard()) return;
-        SetDocument(RandomMandala.CreateIntricate(rng, doc.DiameterMm, settings.Weight));
+        SetDocument(RandomMandala.CreateIntricate(rng, doc.DiameterMm, settings.Weight, difficulty));
         StartFresh();
         status = "New intricate mandala. Press ✦ Intricate again for another, or 🎲 Re-roll a layer you don't like.";
     }
