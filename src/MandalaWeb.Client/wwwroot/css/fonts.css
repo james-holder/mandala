@@ -1,0 +1,8 @@
+/* Bundled OFL fonts for page text (see fonts/LICENSE.txt) */
+@font-face { font-family: "Fredoka"; font-weight: 600; font-display: block; src: url("../fonts/fredoka-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Pacifico"; font-weight: 400; font-display: block; src: url("../fonts/pacifico-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Dancing Script"; font-weight: 700; font-display: block; src: url("../fonts/dancing-script-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Playfair Display"; font-weight: 700; font-display: block; src: url("../fonts/playfair-display-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Bangers"; font-weight: 400; font-display: block; src: url("../fonts/bangers-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Amatic SC"; font-weight: 700; font-display: block; src: url("../fonts/amatic-sc-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Nunito"; font-weight: 800; font-display: block; src: url("../fonts/nunito-latin-800-normal.woff2") format("woff2"); }

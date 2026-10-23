@@ -248,9 +248,38 @@ button.danger:hover:not(:disabled) { background: #fdecea; }
 .trace-panes img { display: block; width: 100%; max-height: 72vh; object-fit: contain; }
 .trace-panes figure:last-child img { cursor: zoom-in; }
 .trace-panes img.stale { opacity: 0.5; }
-.trace-name { width: 160px; }
+.toolbar input.trace-name { width: 160px !important; flex: none; } /* beats the general input rule */
 .panel .warn { font-size: 0.82rem; color: #8a4b00; background: #fff6e5; border: 1px solid #f3d9a8; border-radius: 6px; padding: 0.45rem 0.6rem; }
 .panel .ok { font-size: 0.82rem; color: #2e7d4f; }
 @media (max-width: 800px) {
     .trace-layout { grid-template-columns: 1fr; height: auto; }
+}
+
+/* ---------- Page layout ---------- */
+.page-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; height: calc(100vh - 56px); min-height: 0; }
+.page-layout .panel { border-left: 1px solid var(--line); }
+.page-layout .panel .row { display: flex; gap: 0.35rem; margin: 0.4rem 0; }
+.page-layout .panel .row button { flex: 1; }
+.page-layout .panel textarea { width: 100%; font: inherit; resize: vertical; }
+.page-stage { display: flex; flex-direction: column; align-items: center; padding: 1rem; overflow: hidden; outline: none; background: #ebe8e1; }
+.page-canvas { flex: 1; width: 100%; min-height: 0; touch-action: none; user-select: none; }
+.page-canvas .sheet { fill: white; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.25)); }
+.page-canvas .margin-box { fill: none; stroke: #9a8fd0; stroke-width: 0.4; stroke-dasharray: 2 1.5; pointer-events: none; }
+.page-canvas .item { cursor: move; }
+.page-canvas .hit { fill: transparent; }
+.page-canvas .selection { fill: none; stroke: var(--accent); stroke-width: 0.5; stroke-dasharray: 1.5 1; pointer-events: none; }
+.page-canvas .handle { fill: white; stroke: var(--accent); stroke-width: 0.6; cursor: nwse-resize; }
+.page-canvas .handle.rotate { cursor: grab; }
+.page-canvas .guide { stroke: #e0457b; stroke-width: 0.35; pointer-events: none; }
+.page-canvas .missing { fill: #ddd; stroke: #999; stroke-width: 0.4; }
+.page-canvas .missing-label { fill: #666; }
+.page-hint { margin: 0.4rem 0 0; min-height: 1.2em; }
+.picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0.6rem; max-height: 65vh; overflow-y: auto; }
+.picker-tile { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.4rem; background: white; border: 2px solid var(--line); border-radius: 8px; cursor: pointer; }
+.picker-tile:hover { border-color: var(--accent); }
+.picker-tile img { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; }
+.picker-tile span { font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 800px) {
+    .page-layout { grid-template-columns: 1fr; height: auto; }
+    .page-canvas { height: 70vh; }
 }

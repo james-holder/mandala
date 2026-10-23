@@ -51,7 +51,9 @@ window.mandala = {
         if (preview) mode = "single"; // preview everything in one document
         const { jsPDF } = window.jspdf;
         const sizes = { letter: [215.9, 279.4], legal: [215.9, 355.6], a4: [210, 297], a5: [148, 210] };
-        const [pw, ph] = sizes[(paper || "letter").toLowerCase()] || sizes.letter;
+        // paper is a name above, or "WxH" in inches for a book trim size
+        const custom = /^([\d.]+)x([\d.]+)$/.exec(paper || "");
+        const [pw, ph] = custom ? [+custom[1] * 25.4, +custom[2] * 25.4] : sizes[(paper || "letter").toLowerCase()] || sizes.letter;
         const margin = 12.7, side = Math.min(pw, ph) - 2 * margin;
 
         // svg2pdf reads styles from the live page, so render each SVG in an off-screen holder

@@ -34,6 +34,14 @@ entirely in the browser: designs are generated on your own computer, and nothing
 - Traced designs are saved with kind `traced`: the stored SVG is the page, and the JSON keeps the working image and
   settings so it can be re-traced. They go in folders and books like mandalas; export fits any shape inside the margins.
 
+## Page layout
+
+- **📄 Page** lays out designs (mandalas and traced images) and text on a book page: drag to move, the square handle
+  resizes, the round one rotates, and things snap to the page center. Pages are saved with kind `page`.
+- The saved SVG is only the area inside the margins (PageSizes: 0.5 in, 0.75 in on the spine side), so book export
+  fits it into each book's real margins. Text is drawn as 600 DPI black-and-white images, so PDFs need no fonts.
+- Fonts are bundled in `wwwroot/fonts` (SIL Open Font License, see LICENSE.txt there).
+
 ## Running locally
 
 ```bash

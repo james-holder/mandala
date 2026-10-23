@@ -20,6 +20,7 @@
         <button @onclick="NewLineArt" title="Banded line-art mandala">✏ Line art</button>
         <button @onclick="GoToBatch" title="Make a grid of designs and save the ones you like">▦ Batch</button>
         <button @onclick="GoToTrace" title="Turn clip art or a drawing into a coloring page">🖍 Trace image</button>
+        <button @onclick="GoToPage" title="Lay out designs and text on a book page">📄 Page</button>
     </div>
     <div class="group">
         <button class="save @(unsaved ? "unsaved" : "")" @onclick="SaveToDatabase" disabled="@saving"
@@ -221,9 +222,9 @@
         {
             var all = await Api.ListAsync();
             var summary = all.FirstOrDefault(d => d.Id == id);
-            if (summary?.IsTraced == true)
+            if (summary is { IsMandala: false })
             {
-                Nav.NavigateTo($"trace/{id}", replace: true); // traced images are edited on the trace page
+                Nav.NavigateTo(summary.EditUrl, replace: true); // traced images and pages have their own editors
                 return;
             }
             SetDocument(MandalaDocument.FromJson(await Api.GetJsonAsync(id)));
@@ -408,6 +409,12 @@
     {
         if (!await ConfirmDiscard()) return;
         Nav.NavigateTo("trace");
+    }
+
+    private async Task GoToPage()
+    {
+        if (!await ConfirmDiscard()) return;
+        Nav.NavigateTo("page");
     }
 
     private async Task GoToGallery()

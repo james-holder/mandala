@@ -1,0 +1,592 @@
+@page "/page"
+@page "/page/{Id:long}"
+@using System.Text.Json
+@using System.Text.RegularExpressions
+@inject DesignApi Api
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>Page layout · Mandala Maker</PageTitle>
+
+<header class="toolbar">
+    <div class="brand">Mandala Maker</div>
+    <div class="group">
+        <a class="button" href="">← Back to designing</a>
+        <a class="button" href="gallery">🖼 Gallery</a>
+    </div>
+    <div class="group">
+        <button class="primary" @onclick="AddText">＋ Text</button>
+        <button class="primary" @onclick="OpenPicker">＋ Design…</button>
+    </div>
+    <div class="group">
+        <input class="trace-name" @bind="name" @bind:event="oninput" placeholder="Page name" title="Name for the saved page" />
+        @if (Id == null)
+        {
+            <label class="inline">Save into
+                <select @bind="saveFolder">
+                    <option value="0">Unfiled</option>
+                    @foreach (var f in folders) { <option value="@f.Id">📁 @f.Name</option> }
+                </select>
+            </label>
+        }
+        <button class="accent save @(unsaved ? "unsaved" : "")" @onclick="Save" disabled="@(busy || doc.Items.Count == 0)">💾 @(Id == null ? "Save to gallery" : "Save changes")</button>
+        <button @onclick="Preview" disabled="@(busy || doc.Items.Count == 0)" title="See the page as it will print">👁 Preview</button>
+    </div>
+</header>
+
+<div class="page-layout">
+    <main class="page-stage" tabindex="0" @onkeydown="Key">
+        <svg class="page-canvas" @ref="canvas" viewBox="@($"{F(-6)} {F(-6)} {F(PageW + 12)} {F(PageH + 12)}")"
+             @onpointerdown="BackgroundDown" @onpointermove="Move" @onpointerup="Up" @onpointercancel="Up">
+            <rect class="sheet" x="0" y="0" width="@F(PageW)" height="@F(PageH)" />
+            <rect class="margin-box" x="@F(Box.X)" y="@F(Box.Y)" width="@F(Box.W)" height="@F(Box.H)" />
+            @foreach (var it in doc.Items)
+            {
+                var item = it;
+                <g transform="@($"translate({F(item.X)} {F(item.Y)}) rotate({F(item.Rot)})")" class="item"
+                   @onpointerdown="e => ItemDown(e, item, DragMode.Move)" @onpointerdown:stopPropagation="true">
+                    @if (item.Type == "design")
+                    {
+                        @if (summaries.TryGetValue(item.DesignId ?? 0, out var sd))
+                        {
+                            <image href="@(displayUrl.TryGetValue(sd.Id, out var du) ? du : $"api/designs/{sd.Id}/svg?v={sd.UpdatedUtc.Ticks}")" x="@F(-item.W / 2)" y="@F(-item.H / 2)"
+                                   width="@F(item.W)" height="@F(item.H)" preserveAspectRatio="none" />
+                        }
+                        else
+                        {
+                            <rect class="missing" x="@F(-item.W / 2)" y="@F(-item.H / 2)" width="@F(item.W)" height="@F(item.H)" />
+                            <g><text class="missing-label" text-anchor="middle" dominant-baseline="middle" font-size="5">Design was deleted</text></g>
+                        }
+                    }
+                    else
+                    {
+                        var lines = (item.Text ?? "").Split('\n');
+                        double size = item.SizePt * PtMm, pad = item.Style == "outline" ? Math.Max(0.4, item.OutlineMm) : 0;
+                        double x = item.Align == "left" ? -item.W / 2 + pad : item.Align == "right" ? item.W / 2 - pad : 0;
+                        string anchor = item.Align == "left" ? "start" : item.Align == "right" ? "end" : "middle";
+                        <g><text font-family="@($"'{item.Font}', sans-serif")" font-weight="@Weight(item.Font)" font-size="@F(size)" text-anchor="@anchor"
+                              dominant-baseline="central" fill="@(item.Style == "outline" ? "#fff" : "#000")"
+                              stroke="@(item.Style == "outline" ? "#000" : "none")" stroke-width="@F(Math.Max(0.4, item.OutlineMm) * 2)"
+                              stroke-linejoin="round" paint-order="stroke">
+                            @for (int i = 0; i < lines.Length; i++)
+                            {
+                                <tspan x="@F(x)" y="@F(-item.H / 2 + pad + (i + 0.5) * size * 1.2)">@(lines[i].Length == 0 ? " " : lines[i])</tspan>
+                            }
+                        </text></g>
+                        <rect class="hit" x="@F(-item.W / 2)" y="@F(-item.H / 2)" width="@F(item.W)" height="@F(item.H)" />
+                    }
+                    @if (item == selected)
+                    {
+                        <rect class="selection" x="@F(-item.W / 2)" y="@F(-item.H / 2)" width="@F(item.W)" height="@F(item.H)" />
+                        <line class="selection" x1="0" y1="@F(-item.H / 2)" x2="0" y2="@F(-item.H / 2 - RotateGap)" />
+                        <circle class="handle rotate" cx="0" cy="@F(-item.H / 2 - RotateGap)" r="@F(HandleR)"
+                                @onpointerdown="e => ItemDown(e, item, DragMode.Rotate)" @onpointerdown:stopPropagation="true">
+                            <title>Drag to rotate</title>
+                        </circle>
+                        <rect class="handle" x="@F(item.W / 2 - HandleR)" y="@F(item.H / 2 - HandleR)" width="@F(HandleR * 2)" height="@F(HandleR * 2)"
+                              @onpointerdown="e => ItemDown(e, item, DragMode.Scale)" @onpointerdown:stopPropagation="true">
+                            <title>Drag to resize</title>
+                        </rect>
+                    }
+                </g>
+            }
+            @if (snapX)
+            {
+                <line class="guide" x1="@F(Box.X + Box.W / 2)" y1="0" x2="@F(Box.X + Box.W / 2)" y2="@F(PageH)" />
+            }
+            @if (snapY)
+            {
+                <line class="guide" x1="0" y1="@F(Box.Y + Box.H / 2)" x2="@F(PageW)" y2="@F(Box.Y + Box.H / 2)" />
+            }
+        </svg>
+        <p class="help page-hint">@message</p>
+    </main>
+
+    <aside class="panel">
+        <h3>Page</h3>
+        <label>Size
+            <select value="@doc.Trim" @onchange="e => ChangeTrim(e.Value!.ToString()!)">
+                @foreach (var t in PageSizes.Trim) { <option value="@t.Key">@t.Key in</option> }
+            </select>
+        </label>
+        <p class="help">The dashed box is the area inside the book margins (the spine is on the left). Anything outside it is cut off.</p>
+
+        @if (selected is PageItem s)
+        {
+            <h3>@(s.Type == "text" ? "Text" : "Design")</h3>
+            @if (s.Type == "text")
+            {
+                <label>Words
+                    <textarea rows="3" value="@s.Text" @oninput='e => TextChanged(s, e.Value?.ToString() ?? "")'></textarea>
+                </label>
+                <label>Font
+                    <select value="@s.Font" @onchange="async e => { s.Font = e.Value!.ToString()!; await Remeasure(s); }">
+                        @foreach (var f in Fonts) { <option value="@f.Name" style="font-family:'@f.Name'">@f.Name</option> }
+                    </select>
+                </label>
+                <Num Label="Size (pt)" Value="s.SizePt" Min="8" Max="200" Step="1" Changed="v => { s.SizePt = v; _ = Remeasure(s); }" />
+                <label>Style
+                    <select value="@s.Style" @onchange="async e => { s.Style = e.Value!.ToString()!; await Remeasure(s); }">
+                        <option value="outline">Outline letters (to color in)</option>
+                        <option value="solid">Solid black</option>
+                    </select>
+                </label>
+                @if (s.Style == "outline")
+                {
+                    <Num Label="Outline (mm)" Value="s.OutlineMm" Min="0.4" Max="3" Step="0.1" Changed="v => { s.OutlineMm = v; _ = Remeasure(s); }" />
+                }
+                <label>Line up
+                    <select value="@s.Align" @onchange="e => { s.Align = e.Value!.ToString()!; unsaved = true; }">
+                        <option value="center">Centered</option>
+                        <option value="left">Left</option>
+                        <option value="right">Right</option>
+                    </select>
+                </label>
+            }
+            else
+            {
+                <Num Label="Width (mm)" Value="Math.Round(s.W, 1)" Min="10" Max="400" Step="1" Changed="v => { double f = v / s.W; s.W = v; s.H *= f; Touched(); }" />
+            }
+            <Num Label="Rotation (°)" Value="Math.Round(s.Rot)" Min="-180" Max="180" Step="1" Changed="v => { s.Rot = v; Touched(); }" />
+            <div class="row">
+                <button @onclick="() => { s.X = Box.X + Box.W / 2; Touched(); }" title="Center left to right">↔ Center</button>
+                <button @onclick="() => { s.Y = Box.Y + Box.H / 2; Touched(); }" title="Center top to bottom">↕ Center</button>
+            </div>
+            <div class="row">
+                <button @onclick="() => Reorder(s, 1)" title="In front of the next item">Forward</button>
+                <button @onclick="() => Reorder(s, -1)" title="Behind the previous item">Back</button>
+            </div>
+            <div class="row">
+                <button @onclick="() => Duplicate(s)">Duplicate</button>
+                <button class="danger" @onclick="() => Remove(s)">Delete</button>
+            </div>
+        }
+        else
+        {
+            <p class="help">Add text or a design from your gallery, then drag it into place. Drag the square handle to resize and the round one to rotate. Things snap to the center of the page.</p>
+        }
+    </aside>
+</div>
+
+@if (picking)
+{
+    <div class="modal-backdrop" @onclick="() => picking = false">
+        <div class="modal" @onclick:stopPropagation="true">
+            <div class="preview-head">
+                <h3>Add a design</h3>
+                <label class="inline">From
+                    <select @bind="pickFolder">
+                        <option value="-1">All folders</option>
+                        <option value="0">Unfiled</option>
+                        @foreach (var f in folders) { <option value="@f.Id">📁 @f.Name</option> }
+                    </select>
+                </label>
+                <div class="row end" style="margin:0"><button @onclick="() => picking = false">Close</button></div>
+            </div>
+            <div class="picker-grid">
+                @foreach (var d in Pickable)
+                {
+                    var design = d;
+                    <button class="picker-tile" @onclick="() => AddDesign(design)" title="Add @design.Name">
+                        <img src="api/designs/@design.Id/svg?v=@design.UpdatedUtc.Ticks" alt="" loading="lazy" />
+                        <span>@design.Name</span>
+                    </button>
+                }
+                @if (!Pickable.Any())
+                {
+                    <p class="message">No designs here yet.</p>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<PdfPreview Url="@previewUrl" Title="@($"{(string.IsNullOrWhiteSpace(name) ? "Page" : name)} — preview")" Note="On its own page with 0.5 in margins. In a book it fits the book's margins."
+            OnClose="() => previewUrl = null" />
+
+@code {
+    [Parameter] public long? Id { get; set; }
+
+    private const double Mm = 25.4, PtMm = 25.4 / 72, HandleR = 2.6, RotateGap = 9, SnapMm = 2.5;
+
+    private sealed record FontChoice(string Name, int Weight);
+    private static readonly FontChoice[] Fonts =
+    {
+        new("Fredoka", 600), new("Nunito", 800), new("Bangers", 400), new("Pacifico", 400),
+        new("Dancing Script", 700), new("Playfair Display", 700), new("Amatic SC", 700),
+    };
+    private static int Weight(string font) => Fonts.FirstOrDefault(f => f.Name == font)?.Weight ?? 400;
+
+    /// <summary>One thing on the page. Positions and sizes are in mm from the page's top left; X, Y is the center.</summary>
+    private sealed class PageItem
+    {
+        public string Type { get; set; } = "design"; // "design" or "text"
+        public long? DesignId { get; set; }
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double W { get; set; }
+        public double H { get; set; }
+        public double Rot { get; set; }
+        public string? Text { get; set; }
+        public string Font { get; set; } = "Fredoka";
+        public double SizePt { get; set; } = 48;
+        public string Style { get; set; } = "outline";
+        public double OutlineMm { get; set; } = 0.8;
+        public string Align { get; set; } = "center";
+
+        public PageItem Copy() => (PageItem)MemberwiseClone();
+    }
+
+    /// <summary>A saved page's data.</summary>
+    private sealed class PageDoc
+    {
+        public string Kind { get; set; } = "page";
+        public string Trim { get; set; } = "8.5 × 11";
+        public List<PageItem> Items { get; set; } = new();
+    }
+
+    private sealed record Metrics(double Left, double Top, double MmPerPx, double X0, double Y0);
+    private sealed record Size(double W, double H);
+    private sealed record BoxRect(double X, double Y, double W, double H);
+    private enum DragMode { Move, Scale, Rotate }
+    private sealed record Drag(DragMode Mode, PageItem Item, PageItem Start, double Px, double Py);
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    private PageDoc doc = new();
+    private PageItem? selected;
+    private Drag? drag;
+    private Metrics? metrics;
+    private bool snapX, snapY;
+    private ElementReference canvas;
+    private string name = "";
+    private bool unsaved, busy, picking;
+    private string message = "";
+    private string? previewUrl;
+    private List<FolderSummary> folders = new();
+    private long saveFolder;
+    private long pickFolder = -1;
+    private List<DesignSummary> all = new();
+    private Dictionary<long, DesignSummary> summaries = new();
+    private readonly Dictionary<long, string> svgCache = new();
+    private readonly Dictionary<long, string> displayUrl = new(); // designs without their white background square, for the editor
+
+    private double PageW => PageSizes.Trim[doc.Trim].W * Mm;
+    private double PageH => PageSizes.Trim[doc.Trim].H * Mm;
+    private BoxRect Box => new(PageSizes.InsideIn * Mm, PageSizes.OutsideIn * Mm,
+        PageW - (PageSizes.InsideIn + PageSizes.OutsideIn) * Mm, PageH - 2 * PageSizes.OutsideIn * Mm);
+
+    private IEnumerable<DesignSummary> Pickable => all.Where(d => !d.IsPage &&
+        (pickFolder == -1 || (pickFolder == 0 ? d.FolderId == null : d.FolderId == pickFolder)));
+
+    private static string F(double v) => v.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            folders = await Api.FoldersAsync();
+            all = await Api.ListAsync();
+            summaries = all.ToDictionary(d => d.Id);
+        }
+        catch (Exception ex) { message = "Couldn't load your designs: " + ex.Message; }
+
+        if (Id is long id)
+        {
+            try
+            {
+                var loaded = JsonSerializer.Deserialize<PageDoc>(await Api.GetJsonAsync(id), Json);
+                if (loaded?.Kind != "page" || !PageSizes.Trim.ContainsKey(loaded.Trim))
+                {
+                    Nav.NavigateTo(summaries.TryGetValue(id, out var other) ? other.EditUrl : "gallery", replace: true);
+                    return;
+                }
+                doc = loaded;
+                name = summaries.TryGetValue(id, out var me) ? me.Name : "";
+                foreach (long did in doc.Items.Where(i => i.DesignId is long d && summaries.ContainsKey(d)).Select(i => i.DesignId!.Value).Distinct())
+                    await DesignSvg(did);
+                if (doc.Items.Any(i => i.Type == "design" && !summaries.ContainsKey(i.DesignId ?? 0)))
+                    message = "A design on this page was deleted from the gallery. Delete its gray box or the page won't include it.";
+            }
+            catch (Exception ex) { message = "Couldn't open that page: " + ex.Message; }
+        }
+        else message = "Start with ＋ Text or ＋ Design…";
+    }
+
+    // ---------- Adding things ----------
+
+    private async Task AddText()
+    {
+        var b = Box;
+        var item = new PageItem { Type = "text", Text = "Your text", X = b.X + b.W / 2, Y = b.Y + b.H * 0.12 };
+        doc.Items.Add(item);
+        selected = item;
+        await Remeasure(item);
+        message = "Type your words in the panel on the right.";
+    }
+
+    private void OpenPicker()
+    {
+        picking = true;
+    }
+
+    private async Task AddDesign(DesignSummary d)
+    {
+        picking = false;
+        try
+        {
+            string svg = await DesignSvg(d.Id);
+            double aspect = Aspect(svg);
+            var b = Box;
+            double w = Math.Min(b.W * 0.6, b.H * 0.6 * aspect);
+            var item = new PageItem { Type = "design", DesignId = d.Id, W = w, H = w / aspect, X = b.X + b.W / 2, Y = b.Y + b.H / 2 };
+            doc.Items.Add(item);
+            selected = item;
+            Touched();
+            message = $"Added {d.Name}. Drag it into place.";
+        }
+        catch (Exception ex) { message = "Couldn't add that design: " + ex.Message; }
+    }
+
+    private async Task<string> DesignSvg(long id)
+    {
+        if (!svgCache.TryGetValue(id, out var svg))
+        {
+            svgCache[id] = svg = await Api.GetSvgAsync(id);
+            // In the editor, a design's white background square would hide whatever is behind it
+            string clean = Regex.Replace(svg, @"(<svg[^>]*>\s*)<rect[^>]*fill=""#(?:FFFFFF|ffffff|FFF|fff)""[^>]*/>", "$1", RegexOptions.None, TimeSpan.FromSeconds(1));
+            displayUrl[id] = "data:image/svg+xml;charset=utf-8," + Uri.EscapeDataString(clean);
+        }
+        return svg;
+    }
+
+    private static double Aspect(string svg)
+    {
+        var m = Regex.Match(svg, @"viewBox=""\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)");
+        return m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture, out double w) &&
+               double.TryParse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture, out double h) && w > 0 && h > 0 ? w / h : 1;
+    }
+
+    // ---------- Editing ----------
+
+    private void Touched() => unsaved = true;
+
+    private int textVersion;
+
+    private void TextChanged(PageItem item, string text)
+    {
+        item.Text = text;
+        _ = RemeasureSoon(item);
+    }
+
+    private async Task RemeasureSoon(PageItem item)
+    {
+        int mine = ++textVersion;
+        await Task.Delay(150);
+        if (mine == textVersion) await Remeasure(item);
+    }
+
+    /// <summary>Text boxes are sized from the font, so they're measured again whenever the words or style change.</summary>
+    private async Task Remeasure(PageItem item)
+    {
+        var size = await JS.InvokeAsync<Size>("mandalaPage.measure", TextSpec(item));
+        item.W = size.W;
+        item.H = size.H;
+        Touched();
+        StateHasChanged();
+    }
+
+    private static object TextSpec(PageItem t) => new
+    {
+        type = "text", text = t.Text ?? "", font = t.Font, weight = Weight(t.Font), sizePt = t.SizePt,
+        style = t.Style, outlineMm = t.OutlineMm, align = t.Align, x = t.X, y = t.Y, rot = t.Rot,
+    };
+
+    private void ChangeTrim(string trim)
+    {
+        if (!PageSizes.Trim.ContainsKey(trim)) return;
+        // Keep everything in the same place relative to the margins
+        var before = Box;
+        doc.Trim = trim;
+        var after = Box;
+        double f = Math.Min(after.W / before.W, after.H / before.H);
+        foreach (var it in doc.Items)
+        {
+            it.X = after.X + after.W / 2 + (it.X - before.X - before.W / 2) * f;
+            it.Y = after.Y + after.H / 2 + (it.Y - before.Y - before.H / 2) * f;
+            it.W *= f;
+            it.H *= f;
+            it.SizePt *= f;
+        }
+        Touched();
+    }
+
+    private void Reorder(PageItem item, int by)
+    {
+        int i = doc.Items.IndexOf(item), j = Math.Clamp(i + by, 0, doc.Items.Count - 1);
+        if (i == j) return;
+        doc.Items.RemoveAt(i);
+        doc.Items.Insert(j, item);
+        Touched();
+    }
+
+    private void Duplicate(PageItem item)
+    {
+        var copy = item.Copy();
+        copy.X += 8;
+        copy.Y += 8;
+        doc.Items.Add(copy);
+        selected = copy;
+        Touched();
+    }
+
+    private void Remove(PageItem item)
+    {
+        doc.Items.Remove(item);
+        if (selected == item) selected = null;
+        Touched();
+    }
+
+    // ---------- Pointer: move, resize, rotate ----------
+
+    private async Task ItemDown(PointerEventArgs e, PageItem item, DragMode mode)
+    {
+        selected = item;
+        metrics = await JS.InvokeAsync<Metrics>("mandalaPage.metrics", canvas);
+        await JS.InvokeVoidAsync("mandalaPage.capture", canvas, e.PointerId);
+        var (px, py) = ToMm(e);
+        drag = new Drag(mode, item, item.Copy(), px, py);
+    }
+
+    private void BackgroundDown(PointerEventArgs e)
+    {
+        selected = null;
+        drag = null;
+    }
+
+    private (double X, double Y) ToMm(PointerEventArgs e) => metrics == null ? (0, 0) :
+        (metrics.X0 + (e.ClientX - metrics.Left) * metrics.MmPerPx, metrics.Y0 + (e.ClientY - metrics.Top) * metrics.MmPerPx);
+
+    private void Move(PointerEventArgs e)
+    {
+        if (drag == null) return;
+        var (px, py) = ToMm(e);
+        var it = drag.Item;
+        var st = drag.Start;
+        switch (drag.Mode)
+        {
+            case DragMode.Move:
+                it.X = st.X + px - drag.Px;
+                it.Y = st.Y + py - drag.Py;
+                var b = Box;
+                double cx = b.X + b.W / 2, cy = b.Y + b.H / 2;
+                snapX = Math.Abs(it.X - cx) < SnapMm;
+                snapY = Math.Abs(it.Y - cy) < SnapMm;
+                if (snapX) it.X = cx;
+                if (snapY) it.Y = cy;
+                break;
+            case DragMode.Scale:
+                double d0 = Math.Max(1, Math.Sqrt((drag.Px - st.X) * (drag.Px - st.X) + (drag.Py - st.Y) * (drag.Py - st.Y)));
+                double d1 = Math.Sqrt((px - st.X) * (px - st.X) + (py - st.Y) * (py - st.Y));
+                double f = Math.Clamp(d1 / d0, 0.05, 20);
+                if (st.Type == "text") f = Math.Clamp(st.SizePt * f, 6, 300) / st.SizePt;
+                else f = Math.Max(f, 8 / Math.Min(st.W, st.H)); // nothing smaller than 8 mm
+                it.W = st.W * f;
+                it.H = st.H * f;
+                if (st.Type == "text") it.SizePt = Math.Round(st.SizePt * f, 1);
+                break;
+            case DragMode.Rotate:
+                double a = Math.Atan2(py - st.Y, px - st.X) * 180 / Math.PI + 90;
+                if (a > 180) a -= 360;
+                double nearest = Math.Round(a / 45) * 45; // snap to straight and diagonal angles
+                it.Rot = Math.Abs(a - nearest) < 4 ? nearest : Math.Round(a);
+                break;
+        }
+        unsaved = true;
+    }
+
+    private async Task Up(PointerEventArgs e)
+    {
+        if (drag == null) return;
+        var d = drag;
+        drag = null;
+        snapX = snapY = false;
+        if (d.Mode == DragMode.Scale && d.Item.Type == "text") await Remeasure(d.Item);
+    }
+
+    private void Key(KeyboardEventArgs e)
+    {
+        if (selected is not PageItem s) return;
+        double step = e.ShiftKey ? 5 : 1;
+        switch (e.Key)
+        {
+            case "Delete" or "Backspace": Remove(s); break;
+            case "ArrowLeft": s.X -= step; break;
+            case "ArrowRight": s.X += step; break;
+            case "ArrowUp": s.Y -= step; break;
+            case "ArrowDown": s.Y += step; break;
+            case "Escape": selected = null; break;
+            default: return;
+        }
+        Touched();
+    }
+
+    // ---------- Output ----------
+
+    /// <summary>The finished page as one SVG of the area inside the margins (text drawn as 600 DPI images).</summary>
+    private async Task<string> Compose()
+    {
+        var items = new List<object>();
+        foreach (var it in doc.Items)
+        {
+            if (it.Type == "text") items.Add(TextSpec(it));
+            else if (it.DesignId is long did && summaries.ContainsKey(did))
+                items.Add(new { type = "design", svg = await DesignSvg(did), x = it.X, y = it.Y, w = it.W, h = it.H, rot = it.Rot });
+        }
+        var b = Box;
+        return await JS.InvokeAsync<string>("mandalaPage.compose", new { box = new { x = b.X, y = b.Y, w = b.W, h = b.H }, items });
+    }
+
+    private async Task Save()
+    {
+        busy = true;
+        try
+        {
+            string svg = await Compose();
+            string json = JsonSerializer.Serialize(doc, Json);
+            string? nm = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+            if (Id is long id)
+            {
+                await Api.UpdateAsync(id, nm, json, svg);
+                message = "Saved changes.";
+            }
+            else
+            {
+                var created = await Api.CreateAsync(nm, json, svg, saveFolder == 0 ? null : saveFolder, "page");
+                name = created.Name;
+                summaries[created.Id] = created;
+                message = $"Saved as {created.Name}. It's in 🖼 Gallery" +
+                    (folders.FirstOrDefault(f => f.Id == saveFolder) is { } sf ? $", in the {sf.Name} folder." : ".");
+                Nav.NavigateTo($"page/{created.Id}", replace: true);
+            }
+            unsaved = false;
+        }
+        catch (Exception ex) { message = "Couldn't save: " + ex.Message; }
+        busy = false;
+    }
+
+    private sealed record PdfPage(string Name, string Svg);
+
+    private async Task Preview()
+    {
+        busy = true;
+        try
+        {
+            string svg = await Compose();
+            var (w, h) = PageSizes.Trim[doc.Trim];
+            previewUrl = await JS.InvokeAsync<string>("mandala.exportPdf", new[] { new PdfPage(name, svg) }, "page", $"{F(w)}x{F(h)}", "single", false, true);
+        }
+        catch (Exception ex) { message = "Preview failed: " + ex.Message; }
+        busy = false;
+    }
+}

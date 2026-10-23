@@ -4,7 +4,10 @@ using Microsoft.Data.Sqlite;
 namespace MandalaWeb.Server;
 
 /// <summary>A saved design: its .mandala JSON plus a coloring-page SVG for thumbnails and PDF export.</summary>
-/// <summary>Kind is "mandala" (Json is a .mandala document) or "traced" (Json holds the source image and trace settings).</summary>
+/// <summary>
+/// Kind is "mandala" (Json is a .mandala document), "traced" (Json holds the source image and trace settings)
+/// or "page" (Json is a page layout of designs and text).
+/// </summary>
 public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc, long? FolderId = null, string Kind = "mandala");
 
 /// <summary>FolderId and Kind are only used when a design is first saved; moving it later goes through Move.</summary>
@@ -121,7 +124,7 @@ public sealed class DesignStore
 
     public DesignSummary Create(DesignUpload upload)
     {
-        string name = Clean(upload.Name) ?? NextName(upload.Kind == "traced" ? "Image" : "Mandala");
+        string name = Clean(upload.Name) ?? NextName(upload.Kind switch { "traced" => "Image", "page" => "Page", _ => "Mandala" });
         string now = DateTime.UtcNow.ToString("O");
         using var db = Open();
         using var cmd = db.CreateCommand();
@@ -131,7 +134,7 @@ public sealed class DesignStore
             """;
         long? folder = upload.FolderId is long f && FolderExists(db, f) ? f : null;
         cmd.Parameters.AddWithValue("$folder", (object?)folder ?? DBNull.Value);
-        string kind = upload.Kind == "traced" ? "traced" : "mandala";
+        string kind = upload.Kind is "traced" or "page" ? upload.Kind : "mandala";
         cmd.Parameters.AddWithValue("$kind", kind);
         cmd.Parameters.AddWithValue("$name", name);
         cmd.Parameters.AddWithValue("$json", upload.Json);

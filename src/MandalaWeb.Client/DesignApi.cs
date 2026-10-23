@@ -2,10 +2,15 @@ using System.Net.Http.Json;
 
 namespace MandalaWeb.Client;
 
-/// <summary>Kind is "mandala" or "traced" (a traced image).</summary>
+/// <summary>Kind is "mandala", "traced" (a traced image) or "page" (a laid-out page of designs and text).</summary>
 public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc, long? FolderId = null, string Kind = "mandala")
 {
     public bool IsTraced => Kind == "traced";
+    public bool IsPage => Kind == "page";
+    public bool IsMandala => Kind == "mandala";
+
+    /// <summary>Where the design is edited.</summary>
+    public string EditUrl => Kind switch { "traced" => $"trace/{Id}", "page" => $"page/{Id}", _ => $"d/{Id}" };
 }
 
 public sealed record FolderSummary(long Id, string Name);

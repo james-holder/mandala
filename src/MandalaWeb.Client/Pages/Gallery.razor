@@ -250,7 +250,7 @@
                     {
                         <div class="title" title="Click to rename" @onclick="() => StartRename(design)">@design.Name</div>
                     }
-                    <div class="meta">@design.UpdatedUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</div>
+                    <div class="meta">@(design.IsPage ? "📄 Page · " : design.IsTraced ? "🖍 Traced · " : "")@design.UpdatedUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</div>
                     <div class="actions">
                         <button @onclick="() => viewing = design.Id" title="See it big and zoom in">🔍</button>
                         <button @onclick="() => OpenDesign(design)">Open</button>
@@ -279,17 +279,7 @@
 <PdfPreview Url="@previewUrl" Title="@previewTitle" Note="@previewNote" Download="@previewDownload" OnClose="() => previewUrl = null" />
 
 @code {
-    // Common KDP trim sizes for coloring books (inches)
-    private static readonly Dictionary<string, (double W, double H)> TrimSizes = new()
-    {
-        ["8.5 × 11"] = (8.5, 11),
-        ["8.25 × 11"] = (8.25, 11),
-        ["8 × 10"] = (8, 10),
-        ["8.5 × 8.5"] = (8.5, 8.5),
-        ["8.25 × 8.25"] = (8.25, 8.25),
-        ["7 × 10"] = (7, 10),
-        ["6 × 9"] = (6, 9),
-    };
+    private static readonly Dictionary<string, (double W, double H)> TrimSizes = PageSizes.Trim;
 
     private const double MinLineMm = 0.35; // KDP's minimum is 0.3 mm; this leaves a little room
 
@@ -561,8 +551,8 @@
     {
         if (!svgCache.TryGetValue(id, out var svg))
         {
-            if (designs.FirstOrDefault(d => d.Id == id)?.IsTraced == true)
-                svg = await Api.GetSvgAsync(id); // traced images are stored ready to print
+            if (designs.FirstOrDefault(d => d.Id == id) is { IsMandala: false })
+                svg = await Api.GetSvgAsync(id); // traced images and pages are stored ready to print
             else try { svg = SvgWriter.Export(MandalaDocument.FromJson(await Api.GetJsonAsync(id)), coloringPage: true); }
             catch (Exception) { svg = await Api.GetSvgAsync(id); } // fall back to the stored picture
             svgCache[id] = svg;
@@ -570,7 +560,7 @@
         return svg;
     }
 
-    private void OpenDesign(DesignSummary d) => Nav.NavigateTo(d.IsTraced ? $"trace/{d.Id}" : $"d/{d.Id}");
+    private void OpenDesign(DesignSummary d) => Nav.NavigateTo(d.EditUrl);
 
     private async Task<object> CoverSpec()
     {
