@@ -88,35 +88,20 @@
 
 @if (viewing is Item v)
 {
-    int pos = items.IndexOf(v);
-    <div class="modal-backdrop" @onclick="Close">
-        <div class="modal zoom-modal" tabindex="0" @ref="zoomBox" @onkeydown="ZoomKey" @onclick:stopPropagation="true">
-            <div class="preview-head">
-                <h3>Design @(pos + 1) of @items.Count</h3>
-                <span class="help">Click the picture to zoom in, then scroll to look around. ← → for the next one.</span>
-                <div class="row end" style="margin:0">
-                    <button @onclick="() => Step(-1)" disabled="@(pos <= 0)">←</button>
-                    <button @onclick="() => Step(1)" disabled="@(pos >= items.Count - 1)">→</button>
-                    <button @onclick="() => ZoomBy(-1)" disabled="@(zoom <= 1)">−</button>
-                    <span class="zoom-level">@(zoom)×</span>
-                    <button @onclick="() => ZoomBy(1)" disabled="@(zoom >= 6)">+</button>
-                    @if (v.SavedId == null)
-                    {
-                        <button @onclick="() => Reroll(v)" disabled="@busy" title="Replace this one">↻</button>
-                        <button class="@(v.Picked ? "accent" : "primary")" @onclick="() => v.Picked = !v.Picked">@(v.Picked ? "✓ Picked" : "Pick it")</button>
-                    }
-                    else
-                    {
-                        <span class="saved-name">Saved as @v.Name</span>
-                    }
-                    <button @onclick="Close">Close</button>
-                </div>
-            </div>
-            <div class="zoom-view" @ref="zoomView">
-                <img src="@v.DataUrl" alt="Generated mandala" style="@(zoom == 1 ? "" : $"width:{zoom * 100}%")" class="@(zoom == 1 ? "fit" : zoom >= 6 ? "max" : "")" @onclick="ZoomAtClick" />
-            </div>
-        </div>
-    </div>
+    <ZoomViewer Src="@v.DataUrl" Title="@($"Design {items.IndexOf(v) + 1} of {items.Count}")" Index="@items.IndexOf(v)" Count="@items.Count"
+                OnStep="Step" OnClose="() => viewing = null" OnSpace="() => { if (v.SavedId == null) v.Picked = !v.Picked; }">
+        <Actions>
+            @if (v.SavedId == null)
+            {
+                <button @onclick="() => Reroll(v)" disabled="@busy" title="Replace this one">↻</button>
+                <button class="@(v.Picked ? "accent" : "primary")" @onclick="() => v.Picked = !v.Picked">@(v.Picked ? "✓ Picked" : "Pick it")</button>
+            }
+            else
+            {
+                <span class="saved-name">Saved as @v.Name</span>
+            }
+        </Actions>
+    </ZoomViewer>
 }
 
 @code {
@@ -144,66 +129,14 @@
     private string message = "";
 
     private Item? viewing;
-    private int zoom = 1;
-    private ElementReference zoomBox, zoomView;
-    private double[]? focus; // the point (as fractions of the picture) to keep centered after the next zoom
 
-    private async Task Open(Item item)
-    {
-        viewing = item;
-        zoom = 1;
-        StateHasChanged();
-        await Task.Yield();
-        try { await zoomBox.FocusAsync(); } catch (Exception) { } // so the arrow and Esc keys work right away
-    }
-
-    private void Close() => viewing = null;
-    private static int Next(int z, int by) => by > 0 ? Math.Min(6, z + (z < 2 ? 1 : 2)) : Math.Max(1, z - (z <= 2 ? 1 : 2));
-
-    /// <summary>Zooms in or out around whatever is in the middle of the view now.</summary>
-    private async Task ZoomBy(int by)
-    {
-        focus = await JS.InvokeAsync<double[]>("mandala.zoomCenter", zoomView);
-        zoom = Next(zoom, by);
-    }
-
-    /// <summary>Clicking the picture zooms in on the spot clicked.</summary>
-    private async Task ZoomAtClick(MouseEventArgs e)
-    {
-        if (zoom >= 6) return;
-        focus = await JS.InvokeAsync<double[]>("mandala.zoomPoint", zoomView, e.ClientX, e.ClientY);
-        zoom = Next(zoom, 1);
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (focus is { Length: 2 } f && viewing != null)
-        {
-            focus = null;
-            await JS.InvokeVoidAsync("mandala.zoomTo", zoomView, f[0], f[1]);
-        }
-    }
+    private void Open(Item item) => viewing = item;
 
     private void Step(int by)
     {
         if (viewing == null) return;
         int i = items.IndexOf(viewing) + by;
-        if (i < 0 || i >= items.Count) return;
-        viewing = items[i];
-        zoom = 1;
-    }
-
-    private void ZoomKey(KeyboardEventArgs e)
-    {
-        switch (e.Key)
-        {
-            case "Escape": Close(); break;
-            case "ArrowLeft": Step(-1); break;
-            case "ArrowRight": Step(1); break;
-            case "+" or "=": _ = ZoomBy(1); break;
-            case "-": _ = ZoomBy(-1); break;
-            case " " when viewing?.SavedId == null: viewing!.Picked = !viewing.Picked; break;
-        }
+        if (i >= 0 && i < items.Count) viewing = items[i];
     }
 
     private void SelectAll()

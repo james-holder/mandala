@@ -1,0 +1,94 @@
+@* A large view of one design: click to zoom in on a spot, scroll to look around, ← → to step through. *@
+@inject IJSRuntime JS
+
+<div class="modal-backdrop" @onclick="Close">
+    <div class="modal zoom-modal" tabindex="0" @ref="box" @onkeydown="Key" @onclick:stopPropagation="true">
+        <div class="preview-head">
+            <h3>@Title</h3>
+            <span class="help">Click the picture to zoom in, then scroll to look around. ← → for the next one.</span>
+            <div class="row end" style="margin:0">
+                <button @onclick="() => OnStep.InvokeAsync(-1)" disabled="@(Index <= 0)">←</button>
+                <button @onclick="() => OnStep.InvokeAsync(1)" disabled="@(Index >= Count - 1)">→</button>
+                <button @onclick="() => ZoomBy(-1)" disabled="@(zoom <= 1)">−</button>
+                <span class="zoom-level">@(zoom)×</span>
+                <button @onclick="() => ZoomBy(1)" disabled="@(zoom >= MaxZoom)">+</button>
+                @Actions
+                <button @onclick="Close">Close</button>
+            </div>
+        </div>
+        <div class="zoom-view" @ref="view">
+            <img src="@Src" alt="@Title" style="@(zoom == 1 ? "" : $"width:{zoom * 100}%")" class="@(zoom == 1 ? "fit" : zoom >= MaxZoom ? "max" : "")" @onclick="ZoomAtClick" />
+        </div>
+    </div>
+</div>
+
+@code {
+    private const int MaxZoom = 6;
+
+    [Parameter, EditorRequired] public string Src { get; set; } = "";
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public int Index { get; set; }
+    [Parameter] public int Count { get; set; }
+    [Parameter] public EventCallback<int> OnStep { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    /// <summary>What the space bar does, such as picking the design.</summary>
+    [Parameter] public EventCallback OnSpace { get; set; }
+    /// <summary>Extra buttons shown before Close.</summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+
+    private int zoom = 1;
+    private ElementReference box, view;
+    private double[]? focus; // the point (as fractions of the picture) to keep centered after the next zoom
+    private string? lastSrc;
+
+    protected override void OnParametersSet()
+    {
+        if (Src != lastSrc) zoom = 1; // each design opens zoomed out
+        lastSrc = Src;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try { await box.FocusAsync(); } catch (Exception) { } // so the arrow and Esc keys work right away
+        }
+        if (focus is { Length: 2 } f)
+        {
+            focus = null;
+            await JS.InvokeVoidAsync("mandala.zoomTo", view, f[0], f[1]);
+        }
+    }
+
+    private Task Close() => OnClose.InvokeAsync();
+
+    private static int Next(int z, int by) => by > 0 ? Math.Min(MaxZoom, z + (z < 2 ? 1 : 2)) : Math.Max(1, z - (z <= 2 ? 1 : 2));
+
+    /// <summary>Zooms in or out around whatever is in the middle of the view now.</summary>
+    private async Task ZoomBy(int by)
+    {
+        focus = await JS.InvokeAsync<double[]>("mandala.zoomCenter", view);
+        zoom = Next(zoom, by);
+    }
+
+    /// <summary>Clicking the picture zooms in on the spot clicked.</summary>
+    private async Task ZoomAtClick(MouseEventArgs e)
+    {
+        if (zoom >= MaxZoom) return;
+        focus = await JS.InvokeAsync<double[]>("mandala.zoomPoint", view, e.ClientX, e.ClientY);
+        zoom = Next(zoom, 1);
+    }
+
+    private async Task Key(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "Escape": await Close(); break;
+            case "ArrowLeft" when Index > 0: await OnStep.InvokeAsync(-1); break;
+            case "ArrowRight" when Index < Count - 1: await OnStep.InvokeAsync(1); break;
+            case "+" or "=": await ZoomBy(1); break;
+            case "-": await ZoomBy(-1); break;
+            case " ": await OnSpace.InvokeAsync(); break;
+        }
+    }
+}

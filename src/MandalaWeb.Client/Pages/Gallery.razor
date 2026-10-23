@@ -251,6 +251,7 @@
                     }
                     <div class="meta">@design.UpdatedUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</div>
                     <div class="actions">
+                        <button @onclick="() => viewing = design.Id" title="See it big and zoom in">🔍</button>
                         <button @onclick='() => Nav.NavigateTo($"d/{design.Id}")'>Open</button>
                         <button @onclick="() => Delete(design)">Delete</button>
                     </div>
@@ -260,6 +261,19 @@
         </div>
     }
 </main>
+
+@if (viewing is long vid && Visible.ToList() is var shown && shown.FindIndex(d => d.Id == vid) is int vi && vi >= 0)
+{
+    var vd = shown[vi];
+    bool chosen = order.Contains(vd.Id);
+    <ZoomViewer Src="@($"api/designs/{vd.Id}/svg?v={vd.UpdatedUtc.Ticks}")" Title="@($"{vd.Name} ({vi + 1} of {shown.Count})")" Index="vi" Count="shown.Count"
+                OnStep="by => viewing = shown[Math.Clamp(vi + by, 0, shown.Count - 1)].Id" OnClose="() => viewing = null" OnSpace="() => Toggle(vd.Id)">
+        <Actions>
+            <button class="@(chosen ? "accent" : "primary")" @onclick="() => Toggle(vd.Id)">@(chosen ? $"✓ Selected ({order.IndexOf(vd.Id) + 1})" : "Select it")</button>
+            <button @onclick='() => Nav.NavigateTo($"d/{vd.Id}")'>Open</button>
+        </Actions>
+    </ZoomViewer>
+}
 
 <PdfPreview Url="@previewUrl" Title="@previewTitle" Note="@previewNote" Download="@previewDownload" OnClose="() => previewUrl = null" />
 
@@ -282,6 +296,7 @@
     private List<FolderSummary> folders = new();
     private const string FolderKey = "mandala.galleryFolder";
     private long? viewFolder;       // the folder shown, or null for Unfiled
+    private long? viewing;          // design open in the zoom view
     private long? dropTarget;       // folder being dragged over (0 = Unfiled), for highlighting
     private List<long> dragging = new();
     private string newFolder = "";
