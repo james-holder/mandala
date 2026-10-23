@@ -154,7 +154,7 @@
     protected override async Task OnInitializedAsync()
     {
         settings = AppSettings.FromJson(await JS.InvokeAsync<string?>("mandala.load", SettingsKey));
-        try { folders = await Api.FoldersAsync(); } catch (Exception) { } // saving still works without folders
+        try { folders = await Api.FoldersAsync(DesignApi.Mandalas); } catch (Exception) { } // saving still works without folders
     }
 
     private Item Make()

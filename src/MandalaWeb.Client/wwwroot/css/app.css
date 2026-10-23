@@ -283,3 +283,6 @@ button.danger:hover:not(:disabled) { background: #fdecea; }
     .page-layout { grid-template-columns: 1fr; height: auto; }
     .page-canvas { height: 70vh; }
 }
+
+/* ---------- Gallery library tabs ---------- */
+.library-tabs .button.active { background: var(--accent); border-color: var(--accent); color: white; font-weight: 600; }

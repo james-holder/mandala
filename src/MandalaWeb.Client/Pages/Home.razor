@@ -19,8 +19,7 @@
         <button class="primary" @onclick="NewIntricate" title="Stacked petal layers with echoes and dots">✦ Mandala</button>
         <button @onclick="NewLineArt" title="Banded line-art mandala">✏ Line art</button>
         <button @onclick="GoToBatch" title="Make a grid of designs and save the ones you like">▦ Batch</button>
-        <button @onclick="GoToTrace" title="Turn clip art or a drawing into a coloring page">🖍 Trace image</button>
-        <button @onclick="GoToPage" title="Lay out designs and text on a book page">📄 Page</button>
+        <button @onclick="GoToPictures" title="Traced pictures and laid-out pages, kept separate from mandalas">🖍 Pictures &amp; pages</button>
     </div>
     <div class="group">
         <button class="save @(unsaved ? "unsaved" : "")" @onclick="SaveToDatabase" disabled="@saving"
@@ -405,16 +404,10 @@
         Nav.NavigateTo("batch");
     }
 
-    private async Task GoToTrace()
+    private async Task GoToPictures()
     {
         if (!await ConfirmDiscard()) return;
-        Nav.NavigateTo("trace");
-    }
-
-    private async Task GoToPage()
-    {
-        if (!await ConfirmDiscard()) return;
-        Nav.NavigateTo("page");
+        Nav.NavigateTo("gallery/pictures");
     }
 
     private async Task GoToGallery()

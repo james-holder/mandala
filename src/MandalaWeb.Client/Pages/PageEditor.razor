@@ -12,11 +12,12 @@
     <div class="brand">Mandala Maker</div>
     <div class="group">
         <a class="button" href="">← Back to designing</a>
-        <a class="button" href="gallery">🖼 Gallery</a>
+        <a class="button" href="gallery/pictures">🖼 Pictures &amp; pages</a>
+        <a class="button" href="trace">🖍 Trace image</a>
     </div>
     <div class="group">
         <button class="primary" @onclick="AddText">＋ Text</button>
-        <button class="primary" @onclick="OpenPicker">＋ Design…</button>
+        <button class="primary" @onclick="OpenPicker">＋ Picture…</button>
     </div>
     <div class="group">
         <input class="trace-name" @bind="name" @bind:event="oninput" placeholder="Page name" title="Name for the saved page" />
@@ -113,7 +114,7 @@
 
         @if (selected is PageItem s)
         {
-            <h3>@(s.Type == "text" ? "Text" : "Design")</h3>
+            <h3>@(s.Type == "text" ? "Text" : "Picture")</h3>
             @if (s.Type == "text")
             {
                 <label>Words
@@ -163,7 +164,7 @@
         }
         else
         {
-            <p class="help">Add text or a design from your gallery, then drag it into place. Drag the square handle to resize and the round one to rotate. Things snap to the center of the page.</p>
+            <p class="help">Add text or a traced picture, then drag it into place. Drag the square handle to resize and the round one to rotate. Things snap to the center of the page.</p>
         }
     </aside>
 </div>
@@ -173,7 +174,7 @@
     <div class="modal-backdrop" @onclick="() => picking = false">
         <div class="modal" @onclick:stopPropagation="true">
             <div class="preview-head">
-                <h3>Add a design</h3>
+                <h3>Add a picture</h3>
                 <label class="inline">From
                     <select @bind="pickFolder">
                         <option value="-1">All folders</option>
@@ -194,7 +195,7 @@
                 }
                 @if (!Pickable.Any())
                 {
-                    <p class="message">No designs here yet.</p>
+                    <p class="message">No traced pictures here yet. Use 🖍 Trace image to make some.</p>
                 }
             </div>
         </div>
@@ -276,7 +277,8 @@
     private BoxRect Box => new(PageSizes.InsideIn * Mm, PageSizes.OutsideIn * Mm,
         PageW - (PageSizes.InsideIn + PageSizes.OutsideIn) * Mm, PageH - 2 * PageSizes.OutsideIn * Mm);
 
-    private IEnumerable<DesignSummary> Pickable => all.Where(d => !d.IsPage &&
+    // Pages are built from traced pictures; mandalas stay in their own library
+    private IEnumerable<DesignSummary> Pickable => all.Where(d => d.IsTraced &&
         (pickFolder == -1 || (pickFolder == 0 ? d.FolderId == null : d.FolderId == pickFolder)));
 
     private static string F(double v) => v.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
@@ -285,7 +287,7 @@
     {
         try
         {
-            folders = await Api.FoldersAsync();
+            folders = await Api.FoldersAsync(DesignApi.Pages);
             all = await Api.ListAsync();
             summaries = all.ToDictionary(d => d.Id);
         }
@@ -310,7 +312,7 @@
             }
             catch (Exception ex) { message = "Couldn't open that page: " + ex.Message; }
         }
-        else message = "Start with ＋ Text or ＋ Design…";
+        else message = "Start with ＋ Text or ＋ Picture…";
     }
 
     // ---------- Adding things ----------
@@ -565,7 +567,7 @@
                 var created = await Api.CreateAsync(nm, json, svg, saveFolder == 0 ? null : saveFolder, "page");
                 name = created.Name;
                 summaries[created.Id] = created;
-                message = $"Saved as {created.Name}. It's in 🖼 Gallery" +
+                message = $"Saved as {created.Name}. It's in 🖼 Pictures & pages" +
                     (folders.FirstOrDefault(f => f.Id == saveFolder) is { } sf ? $", in the {sf.Name} folder." : ".");
                 Nav.NavigateTo($"page/{created.Id}", replace: true);
             }

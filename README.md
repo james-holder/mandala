@@ -27,6 +27,12 @@ entirely in the browser: designs are generated on your own computer, and nothing
   redraw each design from its saved data, so older designs get this too.
 - **👁 Preview** (design page, gallery export and KDP cover) shows the finished PDF in a pop-up before you download it.
 
+## Two libraries
+
+Mandalas and the picture tools are kept apart. The gallery has two tabs, **✦ Mandalas** (`/gallery`) and
+**🖍 Pictures & pages** (`/gallery/pictures`); each has its own folders (Folders.Library), selection and books, and the
+server won't move a design into the other library's folder. Pages are built from traced pictures only.
+
 ## Tracing images
 
 - **🖍 Trace image** turns clip art or a drawing into a black-and-white coloring page (vector), using the public-domain

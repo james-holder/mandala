@@ -9,21 +9,27 @@ public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc, lo
     public bool IsPage => Kind == "page";
     public bool IsMandala => Kind == "mandala";
 
+    /// <summary>Mandalas and traced pictures/pages are kept in separate libraries, each with its own folders and books.</summary>
+    public string Library => IsMandala ? DesignApi.Mandalas : DesignApi.Pages;
+
     /// <summary>Where the design is edited.</summary>
     public string EditUrl => Kind switch { "traced" => $"trace/{Id}", "page" => $"page/{Id}", _ => $"d/{Id}" };
 }
 
-public sealed record FolderSummary(long Id, string Name);
+public sealed record FolderSummary(long Id, string Name, string Library = "mandala");
 
 /// <summary>Talks to the server's saved-designs API.</summary>
 public sealed class DesignApi
 {
+    public const string Mandalas = "mandala", Pages = "pages";
+
     private readonly HttpClient _http;
 
     public DesignApi(HttpClient http) => _http = http;
 
     private sealed record Upload(string? Name, string Json, string Svg, long? FolderId = null, string? Kind = null);
     private sealed record MoveRequest(long[] Ids, long? FolderId);
+    private sealed record FolderRequest(string Name, string Library);
     private sealed record NameResult(string Name);
     private sealed record RenameRequest(string Name);
 
@@ -61,12 +67,13 @@ public sealed class DesignApi
 
     // ---------- Folders ----------
 
-    public async Task<List<FolderSummary>> FoldersAsync() =>
-        await _http.GetFromJsonAsync<List<FolderSummary>>("api/folders") ?? new();
+    /// <summary>The folders of one library (Mandalas or Pages).</summary>
+    public async Task<List<FolderSummary>> FoldersAsync(string library) =>
+        (await _http.GetFromJsonAsync<List<FolderSummary>>("api/folders") ?? new()).Where(f => f.Library == library).ToList();
 
-    public async Task<FolderSummary> CreateFolderAsync(string name)
+    public async Task<FolderSummary> CreateFolderAsync(string name, string library)
     {
-        var response = await _http.PostAsJsonAsync("api/folders", new RenameRequest(name));
+        var response = await _http.PostAsJsonAsync("api/folders", new FolderRequest(name, library));
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<FolderSummary>())!;
     }

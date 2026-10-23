@@ -13,8 +13,11 @@ public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc, lo
 /// <summary>FolderId and Kind are only used when a design is first saved; moving it later goes through Move.</summary>
 public sealed record DesignUpload(string? Name, string Json, string Svg, long? FolderId = null, string? Kind = null);
 
-/// <summary>A folder for organizing designs, such as one per book. Each design is in at most one folder.</summary>
-public sealed record FolderSummary(long Id, string Name);
+/// <summary>
+/// A folder for organizing designs, such as one per book. Each design is in at most one folder.
+/// Library keeps mandalas ("mandala") apart from traced pictures and pages ("pages"): each has its own folders and books.
+/// </summary>
+public sealed record FolderSummary(long Id, string Name, string Library = "mandala");
 
 /// <summary>
 /// Saved designs in a SQLite file. On Fly.io the file lives on a volume (DESIGNS_DB points at it),
@@ -50,6 +53,8 @@ public sealed class DesignStore
             Exec(db, "ALTER TABLE Designs ADD COLUMN FolderId INTEGER NULL");
         if (!HasColumn(db, "Designs", "Kind"))
             Exec(db, "ALTER TABLE Designs ADD COLUMN Kind TEXT NOT NULL DEFAULT 'mandala'");
+        if (!HasColumn(db, "Folders", "Library"))
+            Exec(db, "ALTER TABLE Folders ADD COLUMN Library TEXT NOT NULL DEFAULT 'mandala'");
     }
 
     private static bool HasColumn(SqliteConnection db, string table, string column)
@@ -132,9 +137,10 @@ public sealed class DesignStore
             INSERT INTO Designs (Name, Json, Svg, CreatedUtc, UpdatedUtc, FolderId, Kind) VALUES ($name, $json, $svg, $now, $now, $folder, $kind);
             SELECT last_insert_rowid();
             """;
-        long? folder = upload.FolderId is long f && FolderExists(db, f) ? f : null;
-        cmd.Parameters.AddWithValue("$folder", (object?)folder ?? DBNull.Value);
         string kind = upload.Kind is "traced" or "page" ? upload.Kind : "mandala";
+        // A design only goes in a folder of its own library
+        long? folder = upload.FolderId is long f && FolderLibrary(db, f) == LibraryOf(kind) ? f : null;
+        cmd.Parameters.AddWithValue("$folder", (object?)folder ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$kind", kind);
         cmd.Parameters.AddWithValue("$name", name);
         cmd.Parameters.AddWithValue("$json", upload.Json);
@@ -188,31 +194,36 @@ public sealed class DesignStore
     {
         using var db = Open();
         using var cmd = db.CreateCommand();
-        cmd.CommandText = "SELECT Id, Name FROM Folders ORDER BY Name COLLATE NOCASE";
+        cmd.CommandText = "SELECT Id, Name, Library FROM Folders ORDER BY Name COLLATE NOCASE";
         using var r = cmd.ExecuteReader();
         var result = new List<FolderSummary>();
-        while (r.Read()) result.Add(new FolderSummary(r.GetInt64(0), r.GetString(1)));
+        while (r.Read()) result.Add(new FolderSummary(r.GetInt64(0), r.GetString(1), r.GetString(2)));
         return result;
     }
 
-    private static bool FolderExists(SqliteConnection db, long id)
+    /// <summary>The library a design kind belongs to.</summary>
+    public static string LibraryOf(string kind) => kind == "mandala" ? "mandala" : "pages";
+
+    private static string? FolderLibrary(SqliteConnection db, long id)
     {
         using var cmd = db.CreateCommand();
-        cmd.CommandText = "SELECT 1 FROM Folders WHERE Id = $id";
+        cmd.CommandText = "SELECT Library FROM Folders WHERE Id = $id";
         cmd.Parameters.AddWithValue("$id", id);
-        return cmd.ExecuteScalar() != null;
+        return cmd.ExecuteScalar() as string;
     }
 
-    public FolderSummary? CreateFolder(string name)
+    public FolderSummary? CreateFolder(string name, string? library)
     {
         string? clean = Clean(name);
         if (clean == null) return null;
+        string lib = library == "pages" ? "pages" : "mandala";
         using var db = Open();
         using var cmd = db.CreateCommand();
-        cmd.CommandText = "INSERT INTO Folders (Name, CreatedUtc) VALUES ($name, $now); SELECT last_insert_rowid();";
+        cmd.CommandText = "INSERT INTO Folders (Name, CreatedUtc, Library) VALUES ($name, $now, $lib); SELECT last_insert_rowid();";
         cmd.Parameters.AddWithValue("$name", clean);
         cmd.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O"));
-        return new FolderSummary((long)cmd.ExecuteScalar()!, clean);
+        cmd.Parameters.AddWithValue("$lib", lib);
+        return new FolderSummary((long)cmd.ExecuteScalar()!, clean, lib);
     }
 
     public bool RenameFolder(long id, string name)
@@ -244,16 +255,24 @@ public sealed class DesignStore
         return deleted;
     }
 
-    /// <summary>Moves designs into a folder, or to Unfiled when folderId is null. False if the folder doesn't exist.</summary>
+    /// <summary>
+    /// Moves designs into a folder, or to Unfiled when folderId is null. False if the folder doesn't exist.
+    /// Designs from the other library are left where they are.
+    /// </summary>
     public bool Move(IEnumerable<long> designIds, long? folderId)
     {
         using var db = Open();
-        if (folderId is long f && !FolderExists(db, f)) return false;
+        string? lib = null;
+        if (folderId is long f && (lib = FolderLibrary(db, f)) == null) return false;
         using var tx = db.BeginTransaction();
         foreach (long id in designIds)
         {
             using var cmd = db.CreateCommand();
-            cmd.CommandText = "UPDATE Designs SET FolderId = $folder WHERE Id = $id";
+            cmd.CommandText = lib == null
+                ? "UPDATE Designs SET FolderId = NULL WHERE Id = $id"
+                : lib == "mandala"
+                    ? "UPDATE Designs SET FolderId = $folder WHERE Id = $id AND Kind = 'mandala'"
+                    : "UPDATE Designs SET FolderId = $folder WHERE Id = $id AND Kind <> 'mandala'";
             cmd.Parameters.AddWithValue("$id", id);
             cmd.Parameters.AddWithValue("$folder", (object?)folderId ?? DBNull.Value);
             cmd.ExecuteNonQuery();

@@ -51,8 +51,8 @@ api.MapPut("/move", (MoveRequest req, DesignStore s) =>
 
 var folders = app.MapGroup("/api/folders");
 folders.MapGet("/", (DesignStore s) => s.Folders());
-folders.MapPost("/", (RenameRequest req, DesignStore s) =>
-    s.CreateFolder(req.Name) is { } f ? Results.Ok(f) : Results.BadRequest());
+folders.MapPost("/", (FolderRequest req, DesignStore s) =>
+    s.CreateFolder(req.Name, req.Library) is { } f ? Results.Ok(f) : Results.BadRequest());
 folders.MapPut("/{id:long}/name", (long id, RenameRequest req, DesignStore s) =>
     s.RenameFolder(id, req.Name) ? Results.Ok() : Results.BadRequest());
 folders.MapDelete("/{id:long}", (long id, DesignStore s) =>
@@ -78,3 +78,4 @@ app.Run();
 
 record RenameRequest(string Name);
 record MoveRequest(long[] Ids, long? FolderId);
+record FolderRequest(string Name, string? Library);

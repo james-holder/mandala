@@ -1,15 +1,28 @@
 @page "/gallery"
+@page "/gallery/{Lib}"
 @inject DesignApi Api
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 
-<PageTitle>Saved designs · Mandala Maker</PageTitle>
+<PageTitle>@(IsPages ? "Pictures & pages" : "Saved mandalas") · Mandala Maker</PageTitle>
 
 <header class="toolbar">
     <div class="brand">Mandala Maker</div>
+    <div class="group library-tabs">
+        <a class="button @(IsPages ? "" : "active")" href="gallery" title="Mandala designs and mandala books">✦ Mandalas</a>
+        <a class="button @(IsPages ? "active" : "")" href="gallery/pictures" title="Traced pictures, laid-out pages and their books">🖍 Pictures &amp; pages</a>
+    </div>
     <div class="group">
-        <a class="button" href="">← Back to designing</a>
-        <a class="button" href="batch">▦ Batch</a>
+        @if (IsPages)
+        {
+            <a class="button" href="trace">🖍 Trace image</a>
+            <a class="button" href="page">📄 New page</a>
+        }
+        else
+        {
+            <a class="button" href="">← Back to designing</a>
+            <a class="button" href="batch">▦ Batch</a>
+        }
     </div>
     <div class="group">
         <button @onclick="SelectAll" title="Select every design in this folder, oldest first">Select all</button>
@@ -180,12 +193,21 @@
     {
         <p class="message">Loading saved designs…</p>
     }
-    else if (designs.Count == 0)
+    else if (!designs.Any(d => d.Library == Library))
     {
         <div class="empty">
-            <h2>No saved designs yet</h2>
-            <p>Make a mandala and press 💾 Save, or use ▦ Batch to make a dozen at once. They'll show up here.</p>
-            <a class="button primary" href="">Start designing</a>
+            @if (IsPages)
+            {
+                <h2>No pictures or pages yet</h2>
+                <p>Trace clip art or a drawing into a coloring page, or lay out a page with pictures and text. They'll show up here.</p>
+                <a class="button primary" href="trace">🖍 Trace an image</a>
+            }
+            else
+            {
+                <h2>No saved mandalas yet</h2>
+                <p>Make a mandala and press 💾 Save, or use ▦ Batch to make a dozen at once. They'll show up here.</p>
+                <a class="button primary" href="">Start designing</a>
+            }
         </div>
     }
     else
@@ -195,7 +217,7 @@
             <h3>Folders</h3>
             <div class="folder @(viewFolder == null ? "active" : "") @(dropTarget == 0 ? "drop" : "")" @onclick="() => View(null)"
                  @ondragover="() => dropTarget = 0" @ondragover:preventDefault="true" @ondragleave="() => dropTarget = null" @ondrop="() => DropOn(null)">
-                📄 Unfiled <span>@designs.Count(d => d.FolderId == null)</span>
+                📄 Unfiled <span>@designs.Count(d => d.Library == Library && d.FolderId == null)</span>
             </div>
             @foreach (var f in folders)
             {
@@ -285,7 +307,11 @@
 
     private List<DesignSummary> designs = new();
     private List<FolderSummary> folders = new();
-    private const string FolderKey = "mandala.galleryFolder";
+    [Parameter] public string? Lib { get; set; }
+    private bool IsPages => Lib == "pictures";
+    private string Library => IsPages ? DesignApi.Pages : DesignApi.Mandalas;
+    private string FolderKey => IsPages ? "mandala.galleryFolder.pages" : "mandala.galleryFolder";
+    private string? loadedLibrary;
     private long? viewFolder;       // the folder shown, or null for Unfiled
     private long? viewing;          // design open in the zoom view
     private long? dropTarget;       // folder being dragged over (0 = Unfiled), for highlighting
@@ -294,7 +320,7 @@
     private long? renamingFolderId;
     private string folderText = "";
 
-    private IEnumerable<DesignSummary> Visible => designs.Where(d => d.FolderId == viewFolder);
+    private IEnumerable<DesignSummary> Visible => designs.Where(d => d.Library == Library && d.FolderId == viewFolder);
     private string? FolderName(long? id) => id is long f ? folders.FirstOrDefault(x => x.Id == f)?.Name : null;
     private readonly List<long> order = new(); // selected designs, in book order
     private bool loading = true;
@@ -337,12 +363,23 @@
 
     private string ExportName => string.IsNullOrWhiteSpace(prefix) ? "Mandalas" : CleanFileName(prefix);
 
-    protected override async Task OnInitializedAsync()
+    // The same page shows either library; switching tabs starts the library fresh
+    protected override async Task OnParametersSetAsync()
     {
+        if (loadedLibrary == Library) return;
+        loadedLibrary = Library;
+        loading = true;
+        order.Clear();
+        frontId = null;
+        coverDirty = true;
+        viewFolder = null;
+        viewing = null;
+        message = null;
+        prefix = IsPages ? "Coloring Pages" : "Mandalas";
         try
         {
             designs = await Api.ListAsync();
-            folders = await Api.FoldersAsync();
+            folders = await Api.FoldersAsync(Library);
             // Open the folder used last time, if it's still there
             if (long.TryParse(await JS.InvokeAsync<string?>("mandala.load", FolderKey), out long last) && folders.Any(f => f.Id == last))
                 await View(last);
@@ -386,10 +423,11 @@
             coverDirty = true;
         }
         viewFolder = folder;
-        if (FolderName(folder) is string name && (prefix == "Mandalas" || prefix == before || string.IsNullOrWhiteSpace(prefix)))
+        string plain = IsPages ? "Coloring Pages" : "Mandalas";
+        if (FolderName(folder) is string name && (prefix == plain || prefix == before || string.IsNullOrWhiteSpace(prefix)))
             prefix = name;
         else if (folder == null && before != null && prefix == before)
-            prefix = "Mandalas";
+            prefix = plain;
         await JS.InvokeVoidAsync("mandala.save", FolderKey, folder?.ToString() ?? "");
     }
 
@@ -445,7 +483,7 @@
         if (string.IsNullOrWhiteSpace(newFolder)) return;
         try
         {
-            var f = await Api.CreateFolderAsync(newFolder.Trim());
+            var f = await Api.CreateFolderAsync(newFolder.Trim(), Library);
             folders.Add(f);
             folders.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
             newFolder = "";
