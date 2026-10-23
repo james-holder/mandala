@@ -198,3 +198,11 @@ label.inline select { width: auto; }
 .preview-head h3 { margin: 0; }
 .preview-head .help { flex: 1; margin: 0; }
 .preview-modal iframe { flex: 1; width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #525659; }
+
+/* ---------- Batch zoom view ---------- */
+.zoom-modal { width: min(1000px, 96vw); height: 94vh; max-height: none; display: flex; flex-direction: column; padding: 0.8rem 1rem 1rem; outline: none; }
+.zoom-view { position: relative; flex: 1; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: white; text-align: center; }
+.zoom-view img { display: block; margin: 0 auto; max-width: none; height: auto; cursor: zoom-in; }
+.zoom-view img.fit { width: auto; height: 100%; max-width: 100%; aspect-ratio: 1 / 1; object-fit: contain; }
+.zoom-view img.max { cursor: default; }
+.zoom-level { min-width: 2.2rem; text-align: center; font-weight: 600; }

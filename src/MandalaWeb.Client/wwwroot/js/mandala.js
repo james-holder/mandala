@@ -92,6 +92,22 @@ window.mandala = {
         return null;
     },
 
+    // Batch zoom view: the picture point (as 0–1 fractions) at the middle of the view, or under a click,
+    // and scrolling so a given point sits in the middle after the picture changes size
+    zoomCenter(view) {
+        const v = view.getBoundingClientRect();
+        return mandala.zoomPoint(view, v.left + view.clientWidth / 2, v.top + view.clientHeight / 2);
+    },
+    zoomPoint(view, clientX, clientY) {
+        const r = view.querySelector("img").getBoundingClientRect();
+        return [(clientX - r.left) / r.width, (clientY - r.top) / r.height];
+    },
+    zoomTo(view, fx, fy) {
+        const img = view.querySelector("img");
+        view.scrollLeft = img.offsetLeft + fx * img.offsetWidth - view.clientWidth / 2;
+        view.scrollTop = img.offsetTop + fy * img.offsetHeight - view.clientHeight / 2;
+    },
+
     // A link to the PDF for an on-screen preview. The previous preview's link is released first.
     previewUrl(pdf) {
         if (mandala._lastPreview) URL.revokeObjectURL(mandala._lastPreview);
