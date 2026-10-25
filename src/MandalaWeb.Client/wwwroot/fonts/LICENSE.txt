@@ -2,5 +2,7 @@ Fonts in this folder come from the Fontsource packages (npm @fontsource/*, versi
 licensed under the SIL Open Font License 1.1 (https://openfontlicense.org), which allows use in
 commercial print products.
 
+The .woff copies (used to cut numbers as outlines on laser designs) are from the same packages.
+
 Fredoka, Pacifico, Dancing Script, Playfair Display, Bangers, Amatic SC, Nunito
 Copyright their respective authors (see https://fonts.google.com for each family).

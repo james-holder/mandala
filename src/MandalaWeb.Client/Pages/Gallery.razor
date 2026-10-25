@@ -4,16 +4,21 @@
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 
-<PageTitle>@(IsPages ? "Pictures & pages" : "Saved mandalas") · Mandala Maker</PageTitle>
+<PageTitle>@(IsLaser ? "Laser designs" : IsPages ? "Pictures & pages" : "Saved mandalas") · Mandala Maker</PageTitle>
 
 <header class="toolbar">
     <div class="brand">Mandala Maker</div>
     <div class="group library-tabs">
-        <a class="button @(IsPages ? "" : "active")" href="gallery" title="Mandala designs and mandala books">✦ Mandalas</a>
+        <a class="button @(IsPages || IsLaser ? "" : "active")" href="gallery" title="Mandala designs and mandala books">✦ Mandalas</a>
         <a class="button @(IsPages ? "active" : "")" href="gallery/pictures" title="Traced pictures, laid-out pages and their books">🖍 Pictures &amp; pages</a>
+        <a class="button @(IsLaser ? "active" : "")" href="gallery/laser" title="Laser-cut designs: clocks, wall art and coasters">⚙ Laser</a>
     </div>
     <div class="group">
-        @if (IsPages)
+        @if (IsLaser)
+        {
+            <a class="button" href="laser">⚙ New laser design</a>
+        }
+        else if (IsPages)
         {
             <a class="button" href="trace">🖍 Trace image</a>
             <a class="button" href="page">📄 New page</a>
@@ -38,6 +43,13 @@
 </header>
 
 <main class="gallery-page">
+    @if (IsLaser)
+    {
+        <p class="help">Laser designs aren't printed in books. Open one to download its cut file (SVG) for your laser.</p>
+    }
+    else
+    {
+    <div class="book-tools">
     <section class="export-bar">
         <label>File name / prefix <input @bind="prefix" @bind:event="oninput" placeholder="Mandalas" /></label>
         <label>Export as
@@ -183,6 +195,8 @@
             </ol>
         </section>
     }
+    </div>
+    }
 
     @if (!string.IsNullOrEmpty(message))
     {
@@ -196,7 +210,13 @@
     else if (!designs.Any(d => d.Library == Library))
     {
         <div class="empty">
-            @if (IsPages)
+            @if (IsLaser)
+            {
+                <h2>No laser designs yet</h2>
+                <p>Make a clock face, wall art or coaster that cuts as one piece, then save it here.</p>
+                <a class="button primary" href="laser">⚙ New laser design</a>
+            }
+            else if (IsPages)
             {
                 <h2>No pictures or pages yet</h2>
                 <p>Trace clip art or a drawing into a coloring page, or lay out a page with pictures and text. They'll show up here.</p>
@@ -309,8 +329,9 @@
     private List<FolderSummary> folders = new();
     [Parameter] public string? Lib { get; set; }
     private bool IsPages => Lib == "pictures";
-    private string Library => IsPages ? DesignApi.Pages : DesignApi.Mandalas;
-    private string FolderKey => IsPages ? "mandala.galleryFolder.pages" : "mandala.galleryFolder";
+    private bool IsLaser => Lib == "laser";
+    private string Library => IsLaser ? DesignApi.Laser : IsPages ? DesignApi.Pages : DesignApi.Mandalas;
+    private string FolderKey => IsLaser ? "mandala.galleryFolder.laser" : IsPages ? "mandala.galleryFolder.pages" : "mandala.galleryFolder";
     private string? loadedLibrary;
     private long? viewFolder;       // the folder shown, or null for Unfiled
     private long? viewing;          // design open in the zoom view
@@ -375,7 +396,7 @@
         viewFolder = null;
         viewing = null;
         message = null;
-        prefix = IsPages ? "Coloring Pages" : "Mandalas";
+        prefix = IsLaser ? "Laser" : IsPages ? "Coloring Pages" : "Mandalas";
         try
         {
             designs = await Api.ListAsync();
@@ -423,7 +444,7 @@
             coverDirty = true;
         }
         viewFolder = folder;
-        string plain = IsPages ? "Coloring Pages" : "Mandalas";
+        string plain = IsLaser ? "Laser" : IsPages ? "Coloring Pages" : "Mandalas";
         if (FolderName(folder) is string name && (prefix == plain || prefix == before || string.IsNullOrWhiteSpace(prefix)))
             prefix = name;
         else if (folder == null && before != null && prefix == before)

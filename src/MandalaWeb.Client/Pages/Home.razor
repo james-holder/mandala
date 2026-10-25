@@ -20,6 +20,7 @@
         <button @onclick="NewLineArt" title="Banded line-art mandala">✏ Line art</button>
         <button @onclick="GoToBatch" title="Make a grid of designs and save the ones you like">▦ Batch</button>
         <button @onclick="GoToPictures" title="Traced pictures and laid-out pages, kept separate from mandalas">🖍 Pictures &amp; pages</button>
+        <button @onclick="GoToLaser" title="Clocks and wall art that cut as one piece on a laser">⚙ Laser</button>
     </div>
     <div class="group">
         <button class="save @(unsaved ? "unsaved" : "")" @onclick="SaveToDatabase" disabled="@saving"
@@ -402,6 +403,12 @@
     {
         if (!await ConfirmDiscard()) return;
         Nav.NavigateTo("batch");
+    }
+
+    private async Task GoToLaser()
+    {
+        if (!await ConfirmDiscard()) return;
+        Nav.NavigateTo("laser");
     }
 
     private async Task GoToPictures()

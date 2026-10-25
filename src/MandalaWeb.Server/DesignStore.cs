@@ -6,7 +6,7 @@ namespace MandalaWeb.Server;
 /// <summary>A saved design: its .mandala JSON plus a coloring-page SVG for thumbnails and PDF export.</summary>
 /// <summary>
 /// Kind is "mandala" (Json is a .mandala document), "traced" (Json holds the source image and trace settings)
-/// or "page" (Json is a page layout of designs and text).
+/// "page" (Json is a page layout of designs and text) or "laser" (Json holds laser-cut settings).
 /// </summary>
 public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc, long? FolderId = null, string Kind = "mandala");
 
@@ -15,7 +15,8 @@ public sealed record DesignUpload(string? Name, string Json, string Svg, long? F
 
 /// <summary>
 /// A folder for organizing designs, such as one per book. Each design is in at most one folder.
-/// Library keeps mandalas ("mandala") apart from traced pictures and pages ("pages"): each has its own folders and books.
+/// Library keeps mandalas ("mandala"), traced pictures and pages ("pages") and laser-cut designs ("laser") apart:
+/// each has its own folders and books.
 /// </summary>
 public sealed record FolderSummary(long Id, string Name, string Library = "mandala");
 
@@ -129,7 +130,7 @@ public sealed class DesignStore
 
     public DesignSummary Create(DesignUpload upload)
     {
-        string name = Clean(upload.Name) ?? NextName(upload.Kind switch { "traced" => "Image", "page" => "Page", _ => "Mandala" });
+        string name = Clean(upload.Name) ?? NextName(upload.Kind switch { "traced" => "Image", "page" => "Page", "laser" => "Laser", _ => "Mandala" });
         string now = DateTime.UtcNow.ToString("O");
         using var db = Open();
         using var cmd = db.CreateCommand();
@@ -137,7 +138,7 @@ public sealed class DesignStore
             INSERT INTO Designs (Name, Json, Svg, CreatedUtc, UpdatedUtc, FolderId, Kind) VALUES ($name, $json, $svg, $now, $now, $folder, $kind);
             SELECT last_insert_rowid();
             """;
-        string kind = upload.Kind is "traced" or "page" ? upload.Kind : "mandala";
+        string kind = upload.Kind is "traced" or "page" or "laser" ? upload.Kind : "mandala";
         // A design only goes in a folder of its own library
         long? folder = upload.FolderId is long f && FolderLibrary(db, f) == LibraryOf(kind) ? f : null;
         cmd.Parameters.AddWithValue("$folder", (object?)folder ?? DBNull.Value);
@@ -202,7 +203,15 @@ public sealed class DesignStore
     }
 
     /// <summary>The library a design kind belongs to.</summary>
-    public static string LibraryOf(string kind) => kind == "mandala" ? "mandala" : "pages";
+    public static string LibraryOf(string kind) => kind switch { "mandala" => "mandala", "laser" => "laser", _ => "pages" };
+
+    private static string? KindOf(SqliteConnection db, long id)
+    {
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT Kind FROM Designs WHERE Id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        return cmd.ExecuteScalar() as string;
+    }
 
     private static string? FolderLibrary(SqliteConnection db, long id)
     {
@@ -216,7 +225,7 @@ public sealed class DesignStore
     {
         string? clean = Clean(name);
         if (clean == null) return null;
-        string lib = library == "pages" ? "pages" : "mandala";
+        string lib = library is "pages" or "laser" ? library : "mandala";
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = "INSERT INTO Folders (Name, CreatedUtc, Library) VALUES ($name, $now, $lib); SELECT last_insert_rowid();";
@@ -267,12 +276,9 @@ public sealed class DesignStore
         using var tx = db.BeginTransaction();
         foreach (long id in designIds)
         {
+            if (lib != null && (KindOf(db, id) is not string kind || LibraryOf(kind) != lib)) continue;
             using var cmd = db.CreateCommand();
-            cmd.CommandText = lib == null
-                ? "UPDATE Designs SET FolderId = NULL WHERE Id = $id"
-                : lib == "mandala"
-                    ? "UPDATE Designs SET FolderId = $folder WHERE Id = $id AND Kind = 'mandala'"
-                    : "UPDATE Designs SET FolderId = $folder WHERE Id = $id AND Kind <> 'mandala'";
+            cmd.CommandText = "UPDATE Designs SET FolderId = $folder WHERE Id = $id";
             cmd.Parameters.AddWithValue("$id", id);
             cmd.Parameters.AddWithValue("$folder", (object?)folderId ?? DBNull.Value);
             cmd.ExecuteNonQuery();

@@ -27,9 +27,19 @@ entirely in the browser: designs are generated on your own computer, and nothing
   redraw each design from its saved data, so older designs get this too.
 - **👁 Preview** (design page, gallery export and KDP cover) shows the finished PDF in a pop-up before you download it.
 
+## Laser cutting
+
+- **⚙ Laser** (`/laser`) makes clock faces and wall art that cut as **one piece**: lattice, diamond lattice,
+  overlapping rings or a line-art mandala, with a round rim or an edge that follows the mandala (a flower clock).
+  Optional clock numbers (cut as vector outlines read from the font with opentype.js, MIT), center hole and a
+  backing disc. `MandalaCore/Laser/Fretwork.cs` does the geometry with Clipper2: pattern lines become strips at least
+  the material's narrowest width, holes thinner than the smallest hole are filled, and loose pieces are tied on with
+  radial bridges (or left out). Download gives an SVG of red hairline cuts at true size in mm.
+- Laser designs are saved with kind `laser` in their own gallery tab (`/gallery/laser`).
+
 ## Two libraries
 
-Mandalas and the picture tools are kept apart. The gallery has two tabs, **✦ Mandalas** (`/gallery`) and
+Mandalas, the picture tools and laser designs are kept apart. The gallery has three tabs (⚙ Laser too), **✦ Mandalas** (`/gallery`) and
 **🖍 Pictures & pages** (`/gallery/pictures`); each has its own folders (Folders.Library), selection and books, and the
 server won't move a design into the other library's folder. Pages are built from traced pictures only.
 

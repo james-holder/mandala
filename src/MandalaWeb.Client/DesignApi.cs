@@ -2,18 +2,19 @@ using System.Net.Http.Json;
 
 namespace MandalaWeb.Client;
 
-/// <summary>Kind is "mandala", "traced" (a traced image) or "page" (a laid-out page of designs and text).</summary>
+/// <summary>Kind is "mandala", "traced" (a traced image), "page" (a laid-out page of designs and text) or "laser" (a laser-cut design).</summary>
 public sealed record DesignSummary(long Id, string Name, DateTime UpdatedUtc, long? FolderId = null, string Kind = "mandala")
 {
     public bool IsTraced => Kind == "traced";
     public bool IsPage => Kind == "page";
     public bool IsMandala => Kind == "mandala";
+    public bool IsLaser => Kind == "laser";
 
-    /// <summary>Mandalas and traced pictures/pages are kept in separate libraries, each with its own folders and books.</summary>
-    public string Library => IsMandala ? DesignApi.Mandalas : DesignApi.Pages;
+    /// <summary>Mandalas, traced pictures/pages and laser designs are kept in separate libraries, each with its own folders.</summary>
+    public string Library => Kind switch { "mandala" => DesignApi.Mandalas, "laser" => DesignApi.Laser, _ => DesignApi.Pages };
 
     /// <summary>Where the design is edited.</summary>
-    public string EditUrl => Kind switch { "traced" => $"trace/{Id}", "page" => $"page/{Id}", _ => $"d/{Id}" };
+    public string EditUrl => Kind switch { "traced" => $"trace/{Id}", "page" => $"page/{Id}", "laser" => $"laser/{Id}", _ => $"d/{Id}" };
 }
 
 public sealed record FolderSummary(long Id, string Name, string Library = "mandala");
@@ -21,7 +22,7 @@ public sealed record FolderSummary(long Id, string Name, string Library = "manda
 /// <summary>Talks to the server's saved-designs API.</summary>
 public sealed class DesignApi
 {
-    public const string Mandalas = "mandala", Pages = "pages";
+    public const string Mandalas = "mandala", Pages = "pages", Laser = "laser";
 
     private readonly HttpClient _http;
 

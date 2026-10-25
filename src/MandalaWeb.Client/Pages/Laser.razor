@@ -1,0 +1,342 @@
+@page "/laser"
+@page "/laser/{Id:long}"
+@using System.Text.Json
+@using MandalaMaker.Laser
+@inject DesignApi Api
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>Laser cut · Mandala Maker</PageTitle>
+
+<header class="toolbar">
+    <div class="brand">Mandala Maker</div>
+    <div class="group">
+        <a class="button" href="">← Back to designing</a>
+        <a class="button" href="gallery/laser">🖼 Laser designs</a>
+    </div>
+    <div class="group">
+        @if (s.Pattern == "mandala")
+        {
+            <button class="primary" @onclick="NewMandala" disabled="@working" title="A different mandala with the same settings">🎲 New mandala</button>
+        }
+    </div>
+    <div class="group">
+        <input class="trace-name" @bind="name" @bind:event="oninput" placeholder="Name" title="Name for the saved design" />
+        @if (Id == null)
+        {
+            <label class="inline">Save into
+                <select @bind="saveFolder">
+                    <option value="0">Unfiled</option>
+                    @foreach (var f in folders) { <option value="@f.Id">📁 @f.Name</option> }
+                </select>
+            </label>
+        }
+        <button class="accent" @onclick="Save" disabled="@(result == null || working || busy)">💾 @(Id == null ? "Save" : "Save changes")</button>
+        <button class="primary" @onclick="Download" disabled="@(result == null || working)" title="The cut file for LightBurn, Glowforge and similar: red hairlines at true size">⬇ Laser SVG</button>
+    </div>
+</header>
+
+<div class="trace-layout">
+    <aside class="panel">
+        <h3>Material</h3>
+        <label>
+            <select value="@material" @onchange="e => SetMaterial(e.Value!.ToString()!)">
+                @foreach (var m in Materials) { <option value="@m.Key">@m.Name</option> }
+                <option value="custom">Custom</option>
+            </select>
+        </label>
+        <Num Label="Size across (mm)" Value="s.DiameterMm" Min="60" Max="800" Step="5" Changed="v => Set(() => s.DiameterMm = v)" />
+
+        <h3>Pattern</h3>
+        <label>
+            <select value="@s.Pattern" @onchange="e => Set(() => s.Pattern = e.Value!.ToString()!)">
+                <option value="lattice">Lattice (interlocking squares)</option>
+                <option value="diamonds">Diamond lattice</option>
+                <option value="circles">Overlapping rings</option>
+                <option value="mandala">Mandala</option>
+            </select>
+        </label>
+        @if (s.Pattern == "mandala")
+        {
+            <label>Detail
+                <select value="@s.Detail" @onchange="e => SetDetail(e.Value!.ToString()!)">
+                    <option value="Simple">Simple (bold, best for wood)</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Intricate">Intricate (thin material)</option>
+                </select>
+            </label>
+            <label>Edge
+                <select value="@s.Frame" @onchange="e => Set(() => { s.Frame = e.Value!.ToString()!; mandala = null; })">
+                    <option value="circle">Round rim</option>
+                    <option value="shape">Follow the design (no rim)</option>
+                </select>
+            </label>
+        }
+        else
+        {
+            <Num Label="Cells across" Value="s.Cells" Min="3" Max="25" Step="1" Changed="v => Set(() => s.Cells = (int)v)" />
+        }
+        <Num Label="Strip width (mm)" Value="s.BarMm" Min="1" Max="15" Step="0.5" Changed="v => Set(() => s.BarMm = v)" />
+        @if (Round)
+        {
+            <Num Label="Rim width (mm)" Value="s.RimMm" Min="3" Max="60" Step="1" Changed="v => Set(() => s.RimMm = v)" />
+        }
+
+        <h3>Clock</h3>
+        <label class="check"><input type="checkbox" checked="@s.Clock" @onchange="e => Set(() => s.Clock = (bool)e.Value!)" /> Clock face</label>
+        @if (s.Clock && Round)
+        {
+            <label>Numbers
+                <select value="@s.Numbers" @onchange="e => Set(() => s.Numbers = e.Value!.ToString()!)">
+                    <option value="arabic">1 – 12</option>
+                    <option value="roman">I – XII</option>
+                    <option value="none">No numbers</option>
+                </select>
+            </label>
+            @if (s.Numbers != "none")
+            {
+                <label>Font
+                    <select value="@s.NumberFont" @onchange="e => Set(() => s.NumberFont = e.Value!.ToString()!)">
+                        @foreach (var f in NumberFonts) { <option value="@f">@f</option> }
+                    </select>
+                </label>
+                <label>Numbers stand
+                    <select value="@s.NumberAngle" @onchange="e => Set(() => s.NumberAngle = e.Value!.ToString()!)">
+                        <option value="upright">Upright</option>
+                        <option value="radial">Facing the center</option>
+                    </select>
+                </label>
+                <Num Label="Number band (mm)" Value="s.NumberBandMm" Min="10" Max="80" Step="1" Changed="v => Set(() => s.NumberBandMm = v)" />
+            }
+        }
+        else if (s.Clock)
+        {
+            <p class="help">Numbers need the round rim. With this edge you get the center hole only, like a flower clock.</p>
+        }
+        <Num Label="Center hole (mm)" Value="s.CenterHoleMm" Min="0" Max="30" Step="0.5" Changed="v => Set(() => s.CenterHoleMm = v)" />
+        <p class="help">Most clock movements need about 8 mm. Set 0 for no hole.</p>
+
+        <h3>Pieces</h3>
+        <label class="check"><input type="checkbox" checked="@s.Backer" @onchange="e => Set(() => s.Backer = (bool)e.Value!)" /> Also cut a plain backing disc</label>
+        <label>Loose bits
+            <select value="@s.Loose" @onchange="e => Set(() => s.Loose = e.Value!.ToString()!)">
+                <option value="bridge">Tie them on with small bridges</option>
+                <option value="remove">Leave them out</option>
+            </select>
+        </label>
+        <Num Label="Narrowest wood (mm)" Value="s.BridgeMm" Min="0.5" Max="6" Step="0.1" Changed='v => { material = "custom"; Set(() => s.BridgeMm = v); }' />
+        <Num Label="Smallest hole (mm)" Value="s.MinHoleMm" Min="0.5" Max="10" Step="0.1" Changed='v => { material = "custom"; Set(() => s.MinHoleMm = v); }' />
+    </aside>
+
+    <main class="trace-main">
+        @if (previewUrl != null)
+        {
+            <div class="laser-preview">
+                <img src="@previewUrl" alt="Laser design preview" class="@(working ? "stale" : "")" @onclick="() => zooming = true" />
+            </div>
+        }
+        else
+        {
+            <p class="message">@(working ? "Working out the cut…" : "")</p>
+        }
+        @if (result != null)
+        {
+            <div class="laser-facts">
+                <span class="ok">✓ Cuts as one piece</span>
+                <span>@result.Holes holes</span>
+                @if (result.Bridges > 0) { <span>@result.Bridges bridges</span> }
+                @if (result.LooseRemoved > 0) { <span>@result.LooseRemoved tiny loose bits left out</span> }
+                <span>@($"{result.CutLengthMm / 1000:0.0}") m of cutting</span>
+                <span>@($"{s.DiameterMm:0} mm") across@(s.Backer ? " · plus backing disc" : "")</span>
+                <span class="muted">@($"{elapsedMs / 1000.0:0.0}") s</span>
+            </div>
+        }
+        <p class="message">@message</p>
+    </main>
+</div>
+
+@if (zooming && previewUrl != null)
+{
+    <ZoomViewer Src="@previewUrl" Title="@(string.IsNullOrWhiteSpace(name) ? "Laser design" : name)" Index="0" Count="1" OnClose="() => zooming = false" />
+}
+
+@code {
+    [Parameter] public long? Id { get; set; }
+
+    private sealed record MaterialChoice(string Key, string Name, double Bridge, double Hole, double Bar);
+    private static readonly MaterialChoice[] Materials =
+    {
+        new("plywood", "3 mm plywood or MDF", 1.6, 2.5, 5),
+        new("thick", "6 mm plywood", 3, 4, 7),
+        new("acrylic", "3 mm acrylic", 2, 3, 5),
+        new("card", "Paper or cardstock", 0.8, 1.2, 2.5),
+    };
+    private static readonly string[] NumberFonts = { "Playfair Display", "Fredoka", "Nunito", "Bangers" };
+
+    /// <summary>What's saved: the settings, plus the exact mandala used (so it never changes when reopened).</summary>
+    private sealed record LaserDoc(string Kind, string Material, LaserSettings Settings, string? Mandala);
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    private LaserSettings s = new();
+    private string material = "plywood";
+    private MandalaDocument? mandala;
+    private LaserResult? result;
+    private string? previewUrl;
+    private bool working, busy, zooming;
+    private long elapsedMs;
+    private int version;
+    private string name = "";
+    private string message = "";
+    private List<FolderSummary> folders = new();
+    private long saveFolder;
+    private readonly Dictionary<string, Dictionary<string, Glyph>> glyphCache = new();
+
+    private bool Round => s.Frame != "shape" || s.Pattern != "mandala";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { folders = await Api.FoldersAsync(DesignApi.Laser); } catch (Exception) { } // saving still works without folders
+        if (Id is long id)
+        {
+            try
+            {
+                var doc = JsonSerializer.Deserialize<LaserDoc>(await Api.GetJsonAsync(id), Json);
+                if (doc?.Kind != "laser" || doc.Settings == null)
+                {
+                    Nav.NavigateTo("gallery/laser", replace: true);
+                    return;
+                }
+                s = doc.Settings;
+                material = doc.Material;
+                mandala = doc.Mandala == null ? null : MandalaDocument.FromJson(doc.Mandala);
+                name = (await Api.ListAsync()).FirstOrDefault(d => d.Id == id)?.Name ?? "";
+            }
+            catch (Exception ex) { message = "Couldn't open that design: " + ex.Message; }
+        }
+        else name = "Clock";
+        await Rebuild();
+    }
+
+    private void SetMaterial(string key)
+    {
+        material = key;
+        if (Materials.FirstOrDefault(m => m.Key == key) is { } m)
+        {
+            s.BridgeMm = m.Bridge;
+            s.MinHoleMm = m.Hole;
+            s.BarMm = Math.Max(s.BarMm, m.Bar * (s.Pattern == "mandala" ? 0.6 : 1));
+        }
+        _ = Schedule();
+    }
+
+    private void SetDetail(string value)
+    {
+        if (!Enum.TryParse<Difficulty>(value, out var d)) return;
+        s.Detail = d;
+        mandala = null; // a new level needs a new mandala
+        _ = Schedule();
+    }
+
+    private void NewMandala()
+    {
+        s.Seed = Random.Shared.Next(1, int.MaxValue);
+        mandala = null;
+        _ = Schedule();
+    }
+
+    /// <summary>Changes a setting, then works out the cut again once the changes stop for a moment.</summary>
+    private void Set(Action change)
+    {
+        change();
+        if (s.Pattern != "mandala") mandala = null;
+        _ = Schedule();
+    }
+
+    private async Task Schedule()
+    {
+        int mine = ++version;
+        working = true;
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(300);
+        if (mine == version) await Rebuild();
+    }
+
+    private async Task Rebuild()
+    {
+        int mine = ++version;
+        working = true;
+        StateHasChanged();
+        await Task.Delay(20); // let "working" show before the browser gets busy
+        try
+        {
+            Dictionary<string, Glyph>? glyphs = null;
+            if (s.Clock && Round && s.Numbers != "none") glyphs = await Glyphs();
+            if (s.Pattern == "mandala" && mandala == null)
+            {
+                // Sized so the pattern fills the space inside the rim (or the whole piece with no rim)
+                double r = s.DiameterMm / 2 - (Round ? s.RimMm : 0);
+                mandala = Fretwork.MakeMandala(s, Math.Max(10, r));
+            }
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var r2 = Fretwork.Build(s, glyphs, s.Pattern == "mandala" ? mandala : null);
+            elapsedMs = watch.ElapsedMilliseconds;
+            if (mine != version) return; // a newer change is on its way
+            result = r2;
+            previewUrl = "data:image/svg+xml;charset=utf-8," + Uri.EscapeDataString(Fretwork.PreviewSvg(r2));
+            message = "";
+        }
+        catch (Exception ex) { message = "Couldn't work out the cut: " + ex.Message; }
+        working = false;
+        StateHasChanged();
+    }
+
+    private sealed record GlyphJs(string PathData, double Width, double Height);
+
+    private async Task<Dictionary<string, Glyph>> Glyphs()
+    {
+        string key = s.NumberFont + "|" + s.Numbers;
+        if (!glyphCache.TryGetValue(key, out var g))
+        {
+            var raw = await JS.InvokeAsync<Dictionary<string, GlyphJs>>("mandalaLaser.glyphs", s.NumberFont, Fretwork.NumberTexts(s));
+            glyphCache[key] = g = raw.ToDictionary(kv => kv.Key, kv => new Glyph(kv.Value.PathData, kv.Value.Width, kv.Value.Height));
+        }
+        return g;
+    }
+
+    private string DocJson() => JsonSerializer.Serialize(new LaserDoc("laser", material, s, s.Pattern == "mandala" ? mandala?.ToJson() : null), Json);
+
+    private async Task Save()
+    {
+        if (result == null) return;
+        busy = true;
+        try
+        {
+            string svg = Fretwork.PreviewSvg(result);
+            string? nm = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+            if (Id is long id)
+            {
+                await Api.UpdateAsync(id, nm, DocJson(), svg);
+                message = "Saved changes.";
+            }
+            else
+            {
+                var created = await Api.CreateAsync(nm, DocJson(), svg, saveFolder == 0 ? null : saveFolder, "laser");
+                name = created.Name;
+                message = $"Saved as {created.Name}. It's in 🖼 Laser designs" +
+                    (folders.FirstOrDefault(f => f.Id == saveFolder) is { } sf ? $", in the {sf.Name} folder." : ".");
+                Nav.NavigateTo($"laser/{created.Id}", replace: true);
+            }
+        }
+        catch (Exception ex) { message = "Couldn't save: " + ex.Message; }
+        busy = false;
+    }
+
+    private async Task Download()
+    {
+        if (result == null) return;
+        string file = string.IsNullOrWhiteSpace(name) ? "laser-design" : name.Trim();
+        await JS.InvokeVoidAsync("mandala.download", file + "-laser.svg", "image/svg+xml", Fretwork.LaserSvg(result));
+        message = $"Downloaded {file}-laser.svg. Red lines are cuts; it's at true size in mm.";
+    }
+}
