@@ -31,6 +31,7 @@ entirely in the browser: designs are generated on your own computer, and nothing
 
 - **⚙ Laser** (`/laser`) makes clock faces and wall art that cut as **one piece**: lattice, diamond lattice,
   overlapping rings or a line-art mandala, with a round rim or an edge that follows the mandala (a flower clock).
+  Up to 8 layers make a 3D stack (each layer opens wider toward the top and has its own pattern).
   Optional clock numbers (cut as vector outlines read from the font with opentype.js, MIT), center hole and a
   backing disc. `MandalaCore/Laser/Fretwork.cs` does the geometry with Clipper2: pattern lines become strips at least
   the material's narrowest width, holes thinner than the smallest hole are filled, and loose pieces are tied on with

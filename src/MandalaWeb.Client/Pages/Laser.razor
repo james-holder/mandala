@@ -66,7 +66,7 @@
                 </select>
             </label>
             <label>Edge
-                <select value="@s.Frame" @onchange="e => Set(() => { s.Frame = e.Value!.ToString()!; mandala = null; })">
+                <select value="@s.Frame" @onchange="e => Set(() => { s.Frame = e.Value!.ToString()!; mandalas.Clear(); })">
                     <option value="circle">Round rim</option>
                     <option value="shape">Follow the design (no rim)</option>
                 </select>
@@ -117,6 +117,8 @@
         <p class="help">Most clock movements need about 8 mm. Set 0 for no hole.</p>
 
         <h3>Pieces</h3>
+        <Num Label="Layers (3D stack)" Value="s.Layers" Min="1" Max="8" Step="1" Changed="v => SetLayers((int)v)" />
+        <p class="help">@(s.Layers <= 1 ? "1 = a flat piece. 2 or more cuts a stack: each layer opens wider toward the top, so you look down through them." : $"{s.Layers} layers, each the full size, with its own pattern. Glue them in order, top layer up.")</p>
         <label class="check"><input type="checkbox" checked="@s.Backer" @onchange="e => Set(() => s.Backer = (bool)e.Value!)" /> Also cut a plain backing disc</label>
         <label>Loose bits
             <select value="@s.Loose" @onchange="e => Set(() => s.Loose = e.Value!.ToString()!)">
@@ -132,8 +134,22 @@
         @if (previewUrl != null)
         {
             <div class="laser-preview">
-                <img src="@previewUrl" alt="Laser design preview" class="@(working ? "stale" : "")" @onclick="() => zooming = true" />
+                <img src="@ShownUrl" alt="Laser design preview" class="@(working ? "stale" : "")" @onclick="() => zooming = true" />
             </div>
+            @if (layerUrls.Count > 1)
+            {
+                <div class="layer-strip">
+                    <button class="@(shown < 0 ? "active" : "")" @onclick="() => shown = -1"><img src="@previewUrl" alt="" /><span>Stacked</span></button>
+                    @for (int i = 0; i < layerUrls.Count; i++)
+                    {
+                        int index = i;
+                        <button class="@(shown == index ? "active" : "")" @onclick="() => shown = index">
+                            <img src="@layerUrls[index]" alt="" />
+                            <span>@(index == 0 ? "1 · top" : index == layerUrls.Count - 1 ? $"{index + 1} · bottom" : $"{index + 1}")</span>
+                        </button>
+                    }
+                </div>
+            }
         }
         else
         {
@@ -142,7 +158,7 @@
         @if (result != null)
         {
             <div class="laser-facts">
-                <span class="ok">✓ Cuts as one piece</span>
+                <span class="ok">✓ @(result.Layers.Count > 1 ? $"{result.Layers.Count} layers, each one piece" : "Cuts as one piece")</span>
                 <span>@result.Holes holes</span>
                 @if (result.Bridges > 0) { <span>@result.Bridges bridges</span> }
                 @if (result.LooseRemoved > 0) { <span>@result.LooseRemoved tiny loose bits left out</span> }
@@ -157,7 +173,7 @@
 
 @if (zooming && previewUrl != null)
 {
-    <ZoomViewer Src="@previewUrl" Title="@(string.IsNullOrWhiteSpace(name) ? "Laser design" : name)" Index="0" Count="1" OnClose="() => zooming = false" />
+    <ZoomViewer Src="@ShownUrl" Title="@(string.IsNullOrWhiteSpace(name) ? "Laser design" : name)" Index="0" Count="1" OnClose="() => zooming = false" />
 }
 
 @code {
@@ -173,16 +189,20 @@
     };
     private static readonly string[] NumberFonts = { "Playfair Display", "Fredoka", "Nunito", "Bangers" };
 
-    /// <summary>What's saved: the settings, plus the exact mandala used (so it never changes when reopened).</summary>
-    private sealed record LaserDoc(string Kind, string Material, LaserSettings Settings, string? Mandala);
+    /// <summary>What's saved: the settings, plus the exact mandala of each layer (so it never changes when reopened).</summary>
+    private sealed record LaserDoc(string Kind, string Material, LaserSettings Settings, string? Mandala, List<string?>? Mandalas = null);
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private LaserSettings s = new();
     private string material = "plywood";
-    private MandalaDocument? mandala;
-    private LaserResult? result;
+    private List<MandalaDocument?> mandalas = new(); // one per layer, top first (mandala pattern only)
+    private LaserStack? result;
     private string? previewUrl;
+    private List<string> layerUrls = new();
+    private int shown = -1; // -1 = the stack, otherwise one layer
+
+    private string? ShownUrl => shown >= 0 && shown < layerUrls.Count ? layerUrls[shown] : previewUrl;
     private bool working, busy, zooming;
     private long elapsedMs;
     private int version;
@@ -209,7 +229,8 @@
                 }
                 s = doc.Settings;
                 material = doc.Material;
-                mandala = doc.Mandala == null ? null : MandalaDocument.FromJson(doc.Mandala);
+                mandalas = doc.Mandalas?.Select(j => j == null ? null : MandalaDocument.FromJson(j)).ToList()
+                    ?? new List<MandalaDocument?> { doc.Mandala == null ? null : MandalaDocument.FromJson(doc.Mandala) };
                 name = (await Api.ListAsync()).FirstOrDefault(d => d.Id == id)?.Name ?? "";
             }
             catch (Exception ex) { message = "Couldn't open that design: " + ex.Message; }
@@ -230,18 +251,25 @@
         _ = Schedule();
     }
 
+    private void SetLayers(int n)
+    {
+        s.Layers = Math.Clamp(n, 1, 8);
+        shown = -1;
+        _ = Schedule();
+    }
+
     private void SetDetail(string value)
     {
         if (!Enum.TryParse<Difficulty>(value, out var d)) return;
         s.Detail = d;
-        mandala = null; // a new level needs a new mandala
+        mandalas.Clear(); // a new level needs a new mandala
         _ = Schedule();
     }
 
     private void NewMandala()
     {
         s.Seed = Random.Shared.Next(1, int.MaxValue);
-        mandala = null;
+        mandalas.Clear();
         _ = Schedule();
     }
 
@@ -249,7 +277,7 @@
     private void Set(Action change)
     {
         change();
-        if (s.Pattern != "mandala") mandala = null;
+        if (s.Pattern != "mandala") mandalas.Clear();
         _ = Schedule();
     }
 
@@ -272,24 +300,31 @@
         {
             Dictionary<string, Glyph>? glyphs = null;
             if (s.Clock && Round && s.Numbers != "none") glyphs = await Glyphs();
-            if (s.Pattern == "mandala" && mandala == null)
+            int layers = Fretwork.LayerCount(s);
+            if (s.Pattern == "mandala")
             {
-                // Sized so the pattern fills the space inside the rim (or the whole piece with no rim)
-                double r = s.DiameterMm / 2 - (Round ? s.RimMm : 0);
-                mandala = Fretwork.MakeMandala(s, Math.Max(10, r));
+                // One mandala per layer, sized so it fills the space inside the rim (or the whole piece with no rim).
+                // Existing ones are kept, so adding a layer doesn't change the others.
+                double r = Math.Max(10, s.DiameterMm / 2 - (Round ? s.RimMm : 0));
+                while (mandalas.Count < layers) mandalas.Add(Fretwork.MakeMandala(Fretwork.LayerSettings(s, mandalas.Count), r));
+                for (int i = 0; i < layers; i++) mandalas[i] ??= Fretwork.MakeMandala(Fretwork.LayerSettings(s, i), r);
             }
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            var r2 = Fretwork.Build(s, glyphs, s.Pattern == "mandala" ? mandala : null);
+            var built = Fretwork.BuildStack(s, glyphs, s.Pattern == "mandala" ? mandalas.Take(layers).ToList() : null);
             elapsedMs = watch.ElapsedMilliseconds;
             if (mine != version) return; // a newer change is on its way
-            result = r2;
-            previewUrl = "data:image/svg+xml;charset=utf-8," + Uri.EscapeDataString(Fretwork.PreviewSvg(r2));
+            result = built;
+            previewUrl = SvgUrl(Fretwork.PreviewSvg(built));
+            layerUrls = built.Layers.Count > 1 ? built.Layers.Select(l => SvgUrl(Fretwork.LayerPreviewSvg(l))).ToList() : new();
+            if (shown >= layerUrls.Count) shown = -1;
             message = "";
         }
         catch (Exception ex) { message = "Couldn't work out the cut: " + ex.Message; }
         working = false;
         StateHasChanged();
     }
+
+    private static string SvgUrl(string svg) => "data:image/svg+xml;charset=utf-8," + Uri.EscapeDataString(svg);
 
     private sealed record GlyphJs(string PathData, double Width, double Height);
 
@@ -304,7 +339,11 @@
         return g;
     }
 
-    private string DocJson() => JsonSerializer.Serialize(new LaserDoc("laser", material, s, s.Pattern == "mandala" ? mandala?.ToJson() : null), Json);
+    private string DocJson()
+    {
+        var layers = s.Pattern == "mandala" ? mandalas.Take(Fretwork.LayerCount(s)).Select(m => m?.ToJson()).ToList() : null;
+        return JsonSerializer.Serialize(new LaserDoc("laser", material, s, layers?.FirstOrDefault(), layers), Json);
+    }
 
     private async Task Save()
     {

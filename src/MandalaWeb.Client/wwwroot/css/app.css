@@ -294,3 +294,7 @@ button.danger:hover:not(:disabled) { background: #fdecea; }
 .laser-facts { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; margin-top: 0.6rem; font-size: 0.88rem; }
 .laser-facts .ok { color: #2e7d4f; font-weight: 600; }
 .laser-facts .muted { color: var(--muted); }
+.layer-strip { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.6rem; }
+.layer-strip button { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; padding: 0.3rem; background: white; border: 2px solid var(--line); border-radius: 8px; font-size: 0.75rem; }
+.layer-strip button.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.layer-strip img { width: 84px; height: 84px; }

@@ -43,6 +43,11 @@ public sealed class LaserSettings
 
     /// <summary>Also cut a plain backing disc, for the two-tone look.</summary>
     public bool Backer { get; set; } = true;
+    /// <summary>1 for a flat piece, or 2–8 for a layered 3D stack (each layer cut separately, then stacked and glued).</summary>
+    public int Layers { get; set; } = 1;
+
+    public LaserSettings Clone() => (LaserSettings)MemberwiseClone();
+
     /// <summary>
     /// Loose bits that would fall out: "bridge" ties every piece big enough to matter back to the main piece
     /// (crumbs are still removed), "remove" drops them all.
@@ -53,7 +58,21 @@ public sealed class LaserSettings
 /// <summary>A number's outline from the font, in font units with y pointing down, centered on its box.</summary>
 public sealed record Glyph(string PathData, double Width, double Height);
 
-/// <summary>The finished piece and some facts about it.</summary>
+/// <summary>All the pieces of a design, top layer first, plus totals.</summary>
+public sealed class LaserStack
+{
+    public List<LaserResult> Layers { get; init; } = new();
+    public double RadiusMm { get; init; }
+    public double CenterHoleMm { get; init; }
+    public bool Backer { get; init; }
+    public int Holes => Layers.Sum(l => l.Holes);
+    public int Bridges => Layers.Sum(l => l.Bridges);
+    public int LooseRemoved => Layers.Sum(l => l.LooseRemoved);
+    public double CutLengthMm => Layers.Sum(l => l.CutLengthMm) +
+        (Backer ? 2 * Math.PI * RadiusMm + (CenterHoleMm > 0 ? Math.PI * CenterHoleMm : 0) : 0);
+}
+
+/// <summary>One cut piece (a layer) and some facts about it.</summary>
 public sealed class LaserResult
 {
     /// <summary>The wood: outer outlines and holes (even-odd).</summary>
@@ -84,9 +103,48 @@ public static class Fretwork
     /// <summary>The texts the numbers need, so the caller can fetch their outlines from the font.</summary>
     public static IReadOnlyList<string> NumberTexts(LaserSettings s) => s.Numbers == "roman" ? Roman : Arabic;
 
+    /// <summary>How many layers a design has (1 = flat).</summary>
+    public static int LayerCount(LaserSettings s) => Math.Clamp(s.Layers, 1, 8);
+
+    /// <summary>The settings for one layer of a stack (0 = top): each layer gets its own pattern, so the ones below show through.</summary>
+    public static LaserSettings LayerSettings(LaserSettings s, int layer)
+    {
+        var l = s.Clone();
+        if (layer == 0) return l;
+        l.Seed = s.Seed + layer * 1013;
+        if (s.Pattern is "lattice" or "diamonds" && layer % 2 == 1) l.Pattern = s.Pattern == "lattice" ? "diamonds" : "lattice";
+        if (s.Pattern is "lattice" or "diamonds" or "circles") l.Cells = s.Cells + layer;
+        return l;
+    }
+
+    /// <summary>
+    /// Every piece of a design, top layer first. In a stack every layer is the full size, so the edges line up;
+    /// the top has the widest opening in the middle and each layer down opens less, so you look down through them.
+    /// The clock numbers are on the top layer, with solid wood behind them on the layers below.
+    /// </summary>
+    /// <param name="mandalas">For the "mandala" pattern: the line-art design for each layer (top first). Made from the seed where missing.</param>
+    public static LaserStack BuildStack(LaserSettings s, IReadOnlyDictionary<string, Glyph>? glyphs, IReadOnlyList<MandalaDocument?>? mandalas = null)
+    {
+        int n = LayerCount(s);
+        var layers = new List<LaserResult>();
+        for (int t = 0; t < n; t++)
+        {
+            double open = n == 1 ? 0 : (double)(n - 1 - t) / n;
+            var m = mandalas != null && t < mandalas.Count ? mandalas[t] : null;
+            layers.Add(BuildLayer(LayerSettings(s, t), glyphs, m, open, top: t == 0));
+        }
+        return new LaserStack { Layers = layers, RadiusMm = s.DiameterMm / 2, CenterHoleMm = s.CenterHoleMm, Backer = s.Backer };
+    }
+
+    /// <summary>A flat, single-layer piece.</summary>
+    public static LaserResult Build(LaserSettings s, IReadOnlyDictionary<string, Glyph>? glyphs, MandalaDocument? mandala = null) =>
+        BuildLayer(s, glyphs, mandala, 0, top: true);
+
     /// <param name="glyphs">Outline for each number text (see <see cref="NumberTexts"/>); only needed for a clock with numbers.</param>
     /// <param name="mandala">For the "mandala" pattern: the line-art design to cut. Made from the seed if null.</param>
-    public static LaserResult Build(LaserSettings s, IReadOnlyDictionary<string, Glyph>? glyphs, MandalaDocument? mandala = null)
+    /// <param name="openFraction">How much of the pattern's middle is cut away as one big opening (0 = none).</param>
+    /// <param name="top">The top layer carries the numbers; layers below have solid wood behind them.</param>
+    private static LaserResult BuildLayer(LaserSettings s, IReadOnlyDictionary<string, Glyph>? glyphs, MandalaDocument? mandala, double openFraction, bool top)
     {
         double R = s.DiameterMm / 2;
         double bar = Math.Max(s.BarMm, s.BridgeMm);
@@ -94,25 +152,33 @@ public static class Fretwork
         bool round = s.Frame != "shape" || s.Pattern != "mandala";
         double rim = round ? Math.Clamp(s.RimMm, s.BridgeMm, R * 0.4) : 0;
         // Numbers need a band between two rings, so they go with the round frame
-        bool numbers = round && s.Clock && s.Numbers != "none" && glyphs != null;
-        double band = numbers ? Math.Clamp(s.NumberBandMm, 8, R * 0.35) : 0;
+        bool numbersInDesign = round && s.Clock && s.Numbers != "none" && glyphs != null;
+        bool numbers = numbersInDesign && top;
+        double band = numbersInDesign ? Math.Clamp(s.NumberBandMm, 8, R * 0.35) : 0;
         // From the outside in: rim, then the number band (a hole the numbers stand in), then a ring, then the pattern
         double numbersOuter = R - rim, numbersInner = numbersOuter - band;
-        double patternR = numbers ? numbersInner - bar : R - rim;
+        double patternR = numbersInDesign ? numbersInner - bar : R - rim;
+        double openR = openFraction * patternR;
 
         var wood = new PathsD();
         if (rim > 0) wood.AddRange(Annulus(R - rim, R));
         if (numbers) wood.AddRange(Annulus(numbersInner - bar, numbersInner));
+        // Below the top layer the number band is solid, so the numbers stand out against it
+        else if (numbersInDesign) wood.AddRange(Annulus(numbersInner - bar, R));
+        // A ring around the opening, so the pattern's strips end on something
+        if (openR > 0) wood.AddRange(Annulus(openR, openR + bar));
 
         // The pattern, as strips of wood, trimmed to its circle (overlapping the ring around it so they join)
         var lines = s.Pattern == "mandala" ? MandalaLines(mandala, round ? patternR : R - bar / 2, s) : LatticeLines(s, patternR, bar);
         var strips = Stroke(lines, bar / 2);
         // With no rim the pattern reaches the edge; everything outside its outline becomes outside the piece
         double patternEdge = round ? patternR + bar / 2 : R;
-        wood.AddRange(Clipper.Intersect(strips, new PathsD { Circle(0, 0, patternEdge) }, FillRule.NonZero, Precision));
+        var area = openR > 0 ? Annulus(openR, patternEdge) : new PathsD { Circle(0, 0, patternEdge) };
+        wood.AddRange(Clipper.Intersect(strips, area, FillRule.NonZero, Precision));
 
-        // A solid hub for the clock movement to bear against
-        if (s.CenterHoleMm > 0) wood.Add(Circle(0, 0, s.CenterHoleMm / 2 + Math.Max(bar, 4)));
+        // A solid hub for the clock movement to bear against (only on a layer with a middle)
+        bool hole = s.CenterHoleMm > 0 && openR <= 0;
+        if (hole) wood.Add(Circle(0, 0, s.CenterHoleMm / 2 + Math.Max(bar, 4)));
 
         int bridges = 0;
         if (numbers)
@@ -155,15 +221,14 @@ public static class Fretwork
         int removed = loose.Count;
         wood = main;
 
-        if (s.CenterHoleMm > 0)
+        if (hole)
             wood = Clipper.Difference(wood, new PathsD { Circle(0, 0, s.CenterHoleMm / 2) }, FillRule.NonZero, Precision);
 
         int holeCount = wood.Count(p => !Clipper.IsPositive(p));
         double cut = wood.Sum(Perimeter);
-        if (s.Backer) cut += 2 * Math.PI * R + (s.CenterHoleMm > 0 ? Math.PI * s.CenterHoleMm : 0);
         return new LaserResult
         {
-            Material = wood, RadiusMm = R, CenterHoleMm = s.CenterHoleMm, Backer = s.Backer,
+            Material = wood, RadiusMm = R, CenterHoleMm = hole ? s.CenterHoleMm : 0, Backer = s.Backer,
             Holes = holeCount, Pieces = 1, LooseRemoved = removed, Bridges = bridges, CutLengthMm = cut,
         };
     }
@@ -483,39 +548,82 @@ public static class Fretwork
 
     /// <summary>
     /// The file for the laser: every edge as a red hairline (the usual "cut" color), at true size in mm.
-    /// The backing disc, if any, sits to the right of the main piece on the same sheet.
+    /// The pieces sit side by side on one sheet, top layer first, then the backing disc; each is a group named for its layer.
     /// </summary>
-    public static string LaserSvg(LaserResult r)
+    public static string LaserSvg(LaserStack st)
     {
-        double R = r.RadiusMm, gap = 10;
-        double width = r.Backer ? 4 * R + gap : 2 * R;
+        double R = st.RadiusMm, gap = 10;
+        int count = st.Layers.Count + (st.Backer ? 1 : 0);
+        int cols = Math.Min(count, 3), rows = (count + cols - 1) / cols;
+        double width = cols * 2 * R + (cols - 1) * gap, height = rows * 2 * R + (rows - 1) * gap;
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-        sb.AppendLine($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{F(width)}mm\" height=\"{F(2 * R)}mm\" viewBox=\"0 0 {F(width)} {F(2 * R)}\">");
+        sb.AppendLine($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{F(width)}mm\" height=\"{F(height)}mm\" viewBox=\"0 0 {F(width)} {F(height)}\">");
         const string cut = "fill=\"none\" stroke=\"#FF0000\" stroke-width=\"0.1\"";
-        sb.AppendLine($"  <g id=\"top-layer\" transform=\"translate({F(R)} {F(R)})\"><title>Top layer (cut)</title><path {cut} d=\"{PathDataOf(r.Material)}\"/></g>");
-        if (r.Backer)
+        (double X, double Y) Spot(int i) => (R + (i % cols) * (2 * R + gap), R + (i / cols) * (2 * R + gap));
+        for (int i = 0; i < st.Layers.Count; i++)
         {
-            sb.Append($"  <g id=\"backing-disc\" transform=\"translate({F(3 * R + gap)} {F(R)})\"><title>Backing disc (cut)</title>");
+            var (x, y) = Spot(i);
+            string label = st.Layers.Count == 1 ? "Top layer" : i == 0 ? "Layer 1 (top)" : i == st.Layers.Count - 1 ? $"Layer {i + 1} (bottom)" : $"Layer {i + 1}";
+            sb.AppendLine($"  <g id=\"layer-{i + 1}\" transform=\"translate({F(x)} {F(y)})\"><title>{label} (cut)</title><path {cut} d=\"{PathDataOf(st.Layers[i].Material)}\"/></g>");
+        }
+        if (st.Backer)
+        {
+            var (x, y) = Spot(st.Layers.Count);
+            sb.Append($"  <g id=\"backing-disc\" transform=\"translate({F(x)} {F(y)})\"><title>Backing disc (cut)</title>");
             sb.Append($"<circle {cut} cx=\"0\" cy=\"0\" r=\"{F(R)}\"/>");
-            if (r.CenterHoleMm > 0) sb.Append($"<circle {cut} cx=\"0\" cy=\"0\" r=\"{F(r.CenterHoleMm / 2)}\"/>");
+            if (st.CenterHoleMm > 0) sb.Append($"<circle {cut} cx=\"0\" cy=\"0\" r=\"{F(st.CenterHoleMm / 2)}\"/>");
             sb.AppendLine("</g>");
         }
         sb.AppendLine("</svg>");
         return sb.ToString();
     }
 
-    /// <summary>A picture of the finished piece: dark wood on a light backing disc (or on white without one).</summary>
-    public static string PreviewSvg(LaserResult r, string wood = "#5B3A21", string backer = "#E3C495")
+    /// <summary>
+    /// A picture of the finished piece. Layers are drawn bottom up, from light wood to dark, each with a soft shadow,
+    /// so a stack looks 3D; the backing disc (if any) is the lightest, under everything.
+    /// </summary>
+    public static string PreviewSvg(LaserStack st)
     {
-        double R = r.RadiusMm;
+        double R = st.RadiusMm;
+        int n = st.Layers.Count;
+        bool shadows = n > 1 || st.Backer;
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-        sb.AppendLine($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{F(2 * R)}mm\" height=\"{F(2 * R)}mm\" viewBox=\"{F(-R)} {F(-R)} {F(2 * R)} {F(2 * R)}\">");
-        if (r.Backer) sb.AppendLine($"  <circle cx=\"0\" cy=\"0\" r=\"{F(R)}\" fill=\"{backer}\"/>");
-        sb.AppendLine($"  <path fill=\"{wood}\" fill-rule=\"evenodd\" d=\"{PathDataOf(r.Material)}\"/>");
-        if (r.Backer && r.CenterHoleMm > 0) sb.AppendLine($"  <circle cx=\"0\" cy=\"0\" r=\"{F(r.CenterHoleMm / 2)}\" fill=\"#222\"/>");
+        sb.AppendLine($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{F(2 * R)}mm\" height=\"{F(2 * R)}mm\" viewBox=\"{F(-R * 1.02)} {F(-R * 1.02)} {F(2.04 * R)} {F(2.04 * R)}\">");
+        if (shadows)
+            sb.AppendLine($"  <defs><filter id=\"lift\" x=\"-5%\" y=\"-5%\" width=\"110%\" height=\"110%\">" +
+                // A plain blur-offset-merge shadow, which every SVG viewer understands (feDropShadow isn't everywhere)
+                $"<feGaussianBlur in=\"SourceAlpha\" stdDeviation=\"{F(R * 0.006)}\"/><feOffset dx=\"{F(R * 0.004)}\" dy=\"{F(R * 0.008)}\" result=\"s\"/>" +
+                "<feComponentTransfer in=\"s\" result=\"s2\"><feFuncA type=\"linear\" slope=\"0.45\"/></feComponentTransfer>" +
+                "<feMerge><feMergeNode in=\"s2\"/><feMergeNode in=\"SourceGraphic\"/></feMerge></filter></defs>");
+        if (st.Backer) sb.AppendLine($"  <circle cx=\"0\" cy=\"0\" r=\"{F(R)}\" fill=\"#E3C495\"/>");
+        for (int i = n - 1; i >= 0; i--)
+        {
+            // Top layer darkest, bottom lightest
+            double f = n == 1 ? 0 : (double)i / (n - 1);
+            sb.AppendLine($"  <path fill=\"{Mix("#5B3A21", "#C99A62", f)}\" fill-rule=\"evenodd\"{(shadows ? " filter=\"url(#lift)\"" : "")} d=\"{PathDataOf(st.Layers[i].Material)}\"/>");
+        }
+        if (st.CenterHoleMm > 0) sb.AppendLine($"  <circle cx=\"0\" cy=\"0\" r=\"{F(st.CenterHoleMm / 2)}\" fill=\"#222\"/>");
         sb.AppendLine("</svg>");
         return sb.ToString();
+    }
+
+    /// <summary>One layer on its own, for checking it before cutting.</summary>
+    public static string LayerPreviewSvg(LaserResult layer)
+    {
+        double r = layer.RadiusMm;
+        var sb = new StringBuilder();
+        sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+        sb.AppendLine($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{F(2 * r)}mm\" height=\"{F(2 * r)}mm\" viewBox=\"{F(-r)} {F(-r)} {F(2 * r)} {F(2 * r)}\">");
+        sb.AppendLine($"  <path fill=\"#8A5A33\" fill-rule=\"evenodd\" d=\"{PathDataOf(layer.Material)}\"/>");
+        sb.AppendLine("</svg>");
+        return sb.ToString();
+    }
+
+    private static string Mix(string a, string b, double f)
+    {
+        int C(string h, int i) => Convert.ToInt32(h.Substring(1 + 2 * i, 2), 16);
+        return "#" + string.Concat(Enumerable.Range(0, 3).Select(i => ((int)Math.Round(C(a, i) + (C(b, i) - C(a, i)) * f)).ToString("X2")));
     }
 }
