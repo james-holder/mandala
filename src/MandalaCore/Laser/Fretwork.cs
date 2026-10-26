@@ -12,7 +12,7 @@ namespace MandalaMaker.Laser;
 /// <summary>What a laser-cut piece looks like and the rules it's cut by. Lengths are in mm.</summary>
 public sealed class LaserSettings
 {
-    /// <summary>"lattice" (interlocking squares), "diamonds" (the lattice turned 45°), "circles" (overlapping rings) or "mandala".</summary>
+    /// <summary>"lattice" (interlocking squares), "diamonds" (the lattice turned 45°), "circles" (overlapping rings), "mandala" or "wreath" (leaves and berries).</summary>
     public string Pattern { get; set; } = "lattice";
     public double DiameterMm { get; set; } = 300;
     /// <summary>Width of the pattern's strips of wood.</summary>
@@ -25,6 +25,14 @@ public sealed class LaserSettings
     public string Frame { get; set; } = "circle";
     /// <summary>Solid ring around the outside, with the circle frame.</summary>
     public double RimMm { get; set; } = 14;
+    /// <summary>Outline of the piece with the rim: "round" or "scalloped".</summary>
+    public string Edge { get; set; } = "round";
+    /// <summary>How many scallops around a scalloped edge.</summary>
+    public int Scallops { get; set; } = 16;
+    /// <summary>In a stack, how much smaller each layer is than the one below it, so every edge shows (0 = flush).</summary>
+    public double LayerStepMm { get; set; }
+    /// <summary>Preview colors: "alternate" (walnut and birch) or "gradient" (dark on top to light below).</summary>
+    public string Look { get; set; } = "alternate";
     /// <summary>How many lattice cells fit across the pattern.</summary>
     public int Cells { get; set; } = 9;
     public Difficulty Detail { get; set; } = Difficulty.Simple;
@@ -33,6 +41,11 @@ public sealed class LaserSettings
     public bool Clock { get; set; } = true;
     /// <summary>"arabic" (1–12), "roman" (I–XII) or "none".</summary>
     public string Numbers { get; set; } = "arabic";
+    /// <summary>
+    /// Where the numbers go: "band" (all 12 in a ring near the edge), "medallions" (12, 3, 6 and 9 in round medallions on a ring)
+    /// or "face" (12, 3, 6 and 9 and hour dots cut through a solid face in the middle, on the bottom layer).
+    /// </summary>
+    public string Placement { get; set; } = "band";
     /// <summary>"upright" or "radial" (each number turned to face the center).</summary>
     public string NumberAngle { get; set; } = "upright";
     public string NumberFont { get; set; } = "Playfair Display";
@@ -61,6 +74,8 @@ public sealed record Glyph(string PathData, double Width, double Height);
 /// <summary>All the pieces of a design, top layer first, plus totals.</summary>
 public sealed class LaserStack
 {
+    /// <summary>The backing disc's outline: the bottom layer's outer edge, filled solid.</summary>
+    public PathsD BackerShape { get; init; } = new();
     public List<LaserResult> Layers { get; init; } = new();
     public double RadiusMm { get; init; }
     public double CenterHoleMm { get; init; }
@@ -85,6 +100,9 @@ public sealed class LaserResult
     public int LooseRemoved { get; init; }
     public int Bridges { get; init; }
     public double CutLengthMm { get; init; }
+    /// <summary>Where the top layer's medallions sit (radius of their centers) and how big they are; 0 without medallions.</summary>
+    public double MedallionRingMm { get; init; }
+    public double MedallionMm { get; init; }
 }
 
 /// <summary>
@@ -130,51 +148,106 @@ public static class Fretwork
         for (int t = 0; t < n; t++)
         {
             double open = n == 1 ? 0 : (double)(n - 1 - t) / n;
+            // With a face, every layer above the bottom opens wide enough to show it
+            if (s.Clock && s.Placement == "face" && t < n - 1) open = Math.Max(open, FaceFraction + 0.04);
             var m = mandalas != null && t < mandalas.Count ? mandalas[t] : null;
-            layers.Add(BuildLayer(LayerSettings(s, t), glyphs, m, open, top: t == 0));
+            double inset = Math.Max(0, s.LayerStepMm) * (n - 1 - t); // the top layer is the smallest
+            // Layers below the top get a solid disc under each medallion, so its number shows in plain wood
+            var under = t == 0 ? null : layers[0];
+            layers.Add(BuildLayer(LayerSettings(s, t), glyphs, m, open, top: t == 0, bottom: t == n - 1, inset,
+                under?.MedallionRingMm ?? 0, under?.MedallionMm ?? 0));
         }
-        return new LaserStack { Layers = layers, RadiusMm = s.DiameterMm / 2, CenterHoleMm = s.CenterHoleMm, Backer = s.Backer };
+        bool round = s.Frame != "shape" || s.Pattern != "mandala";
+        var back = round ? Outline(s, s.DiameterMm / 2, out _) : new PathsD { Circle(0, 0, s.DiameterMm / 2) };
+        return new LaserStack { Layers = layers, RadiusMm = s.DiameterMm / 2, CenterHoleMm = s.CenterHoleMm, Backer = s.Backer, BackerShape = back };
     }
 
     /// <summary>A flat, single-layer piece.</summary>
     public static LaserResult Build(LaserSettings s, IReadOnlyDictionary<string, Glyph>? glyphs, MandalaDocument? mandala = null) =>
-        BuildLayer(s, glyphs, mandala, 0, top: true);
+        BuildLayer(s, glyphs, mandala, 0, top: true, bottom: true, 0);
+
+    /// <summary>How much of the pattern a solid clock face covers.</summary>
+    private const double FaceFraction = 0.6;
+
+    private static readonly string[] Quarter = { "12", "3", "6", "9" };
+    private static readonly string[] QuarterRoman = { "XII", "III", "VI", "IX" };
+
+    /// <summary>The outline of the whole piece: a circle, or a circle with scallops around it.</summary>
+    private static PathsD Outline(LaserSettings s, double r, out double inner)
+    {
+        inner = r;
+        if (s.Edge != "scalloped") return new PathsD { Circle(0, 0, r) };
+        int n = Math.Clamp(s.Scallops, 6, 48);
+        double bump = Math.PI * r / n * 0.62; // scallop radius: neighbors overlap a little so the edge stays smooth
+        double baseR = r - bump * 0.55;
+        inner = baseR;
+        var parts = new PathsD { Circle(0, 0, baseR) };
+        for (int k = 0; k < n; k++)
+        {
+            double a = 2 * Math.PI * k / n;
+            parts.Add(Circle((r - bump) * Math.Sin(a), -(r - bump) * Math.Cos(a), bump));
+        }
+        return Clipper.Union(parts, FillRule.NonZero);
+    }
 
     /// <param name="glyphs">Outline for each number text (see <see cref="NumberTexts"/>); only needed for a clock with numbers.</param>
     /// <param name="mandala">For the "mandala" pattern: the line-art design to cut. Made from the seed if null.</param>
     /// <param name="openFraction">How much of the pattern's middle is cut away as one big opening (0 = none).</param>
     /// <param name="top">The top layer carries the numbers; layers below have solid wood behind them.</param>
-    private static LaserResult BuildLayer(LaserSettings s, IReadOnlyDictionary<string, Glyph>? glyphs, MandalaDocument? mandala, double openFraction, bool top)
+    /// <param name="bottom">The bottom layer carries a solid clock face, if there is one.</param>
+    /// <param name="inset">How much smaller than full size this layer is (stepped stacks).</param>
+    private static LaserResult BuildLayer(LaserSettings s, IReadOnlyDictionary<string, Glyph>? glyphs, MandalaDocument? mandala,
+        double openFraction, bool top, bool bottom, double inset, double medallionRing = 0, double medallionR = 0)
     {
-        double R = s.DiameterMm / 2;
+        double R = s.DiameterMm / 2 - inset;
         double bar = Math.Max(s.BarMm, s.BridgeMm);
-        // Only a mandala has an outline of its own to follow; lattices always get a rim
+        // Only a mandala has an outline of its own to follow; other patterns always get a rim
         bool round = s.Frame != "shape" || s.Pattern != "mandala";
         double rim = round ? Math.Clamp(s.RimMm, s.BridgeMm, R * 0.4) : 0;
-        // Numbers need a band between two rings, so they go with the round frame
-        bool numbersInDesign = round && s.Clock && s.Numbers != "none" && glyphs != null;
-        bool numbers = numbersInDesign && top;
-        double band = numbersInDesign ? Math.Clamp(s.NumberBandMm, 8, R * 0.35) : 0;
+        double innerR = R;
+        var outline = round ? Outline(s, R, out innerR) : new PathsD { Circle(0, 0, R) };
+        bool clock = round && s.Clock && s.Numbers != "none" && glyphs != null;
+        string placement = clock ? s.Placement : "none";
+        // In the band style, the numbers stand in a band between two rings near the edge
+        bool inBand = placement == "band";
+        bool numbers = inBand && top;
+        double band = inBand ? Math.Clamp(s.NumberBandMm, 8, R * 0.35) : 0;
         // From the outside in: rim, then the number band (a hole the numbers stand in), then a ring, then the pattern
-        double numbersOuter = R - rim, numbersInner = numbersOuter - band;
-        double patternR = numbersInDesign ? numbersInner - bar : R - rim;
+        double numbersOuter = innerR - rim, numbersInner = numbersOuter - band;
+        double patternR = inBand ? numbersInner - bar : innerR - rim;
         double openR = openFraction * patternR;
+        // A solid face in the middle of the bottom layer, with the numbers cut through it
+        double faceR = placement == "face" && bottom ? FaceFraction * patternR : 0;
 
         var wood = new PathsD();
-        if (rim > 0) wood.AddRange(Annulus(R - rim, R));
+        if (rim > 0)
+            wood.AddRange(Clipper.Difference(outline, Clipper.InflatePaths(outline, -rim, JoinType.Round, EndType.Polygon, 2, Precision, ArcTol), FillRule.NonZero, Precision));
         if (numbers) wood.AddRange(Annulus(numbersInner - bar, numbersInner));
         // Below the top layer the number band is solid, so the numbers stand out against it
-        else if (numbersInDesign) wood.AddRange(Annulus(numbersInner - bar, R));
+        else if (inBand) wood.AddRange(Annulus(numbersInner - bar, innerR - rim + bar));
         // A ring around the opening, so the pattern's strips end on something
         if (openR > 0) wood.AddRange(Annulus(openR, openR + bar));
+        if (faceR > 0) wood.Add(Circle(0, 0, faceR));
 
-        // The pattern, as strips of wood, trimmed to its circle (overlapping the ring around it so they join)
-        var lines = s.Pattern == "mandala" ? MandalaLines(mandala, round ? patternR : R - bar / 2, s) : LatticeLines(s, patternR, bar);
-        var strips = Stroke(lines, bar / 2);
-        // With no rim the pattern reaches the edge; everything outside its outline becomes outside the piece
+        // The pattern, trimmed to its circle (overlapping the ring around it so they join)
         double patternEdge = round ? patternR + bar / 2 : R;
-        var area = openR > 0 ? Annulus(openR, patternEdge) : new PathsD { Circle(0, 0, patternEdge) };
-        wood.AddRange(Clipper.Intersect(strips, area, FillRule.NonZero, Precision));
+        double patternInner = Math.Max(openR, faceR);
+        var area = patternInner > 0 ? Annulus(patternInner, patternEdge) : new PathsD { Circle(0, 0, patternEdge) };
+        var cuts = new PathsD();
+        if (s.Pattern == "wreath")
+        {
+            // The wreath fills the band between the face (or opening) and the rim; without either it keeps clear of the middle
+            double inner = patternInner > 0 ? patternInner : patternR * 0.5;
+            if (patternInner <= 0) wood.AddRange(Annulus(inner - bar, inner));
+            var (solids, wreathLines, slots) = Wreath(s, inner, patternR, bar);
+            wood.AddRange(Clipper.Intersect(Clipper.Union(solids, Stroke(wreathLines, bar * 0.4), FillRule.NonZero, Precision), area, FillRule.NonZero, Precision));
+            cuts.AddRange(slots);
+        }
+        else
+        {
+            var lines = s.Pattern == "mandala" ? MandalaLines(mandala, round ? patternR : R - bar / 2, s) : LatticeLines(s, patternR, bar);
+            wood.AddRange(Clipper.Intersect(Stroke(lines, bar / 2), area, FillRule.NonZero, Precision));
+        }
 
         // A solid hub for the clock movement to bear against (only on a layer with a middle)
         bool hole = s.CenterHoleMm > 0 && openR <= 0;
@@ -188,11 +261,51 @@ public static class Fretwork
             bridges += numberBridges;
         }
 
+        // Medallions: four round plaques on the ring around the top layer's opening, each with its number cut through
+        var numberHoles = new PathsD();
+        if (placement == "medallions" && top)
+        {
+            double ringR = openR > 0 ? openR + bar / 2 : patternR * 0.62;
+            if (openR <= 0) wood.AddRange(Annulus(ringR - bar / 2, ringR + bar / 2));
+            double mr = Math.Clamp(s.NumberBandMm * 0.5, 8, patternR * 0.18);
+            for (int q = 0; q < 4; q++)
+            {
+                double a = q * Math.PI / 2;
+                wood.Add(Circle(ringR * Math.Sin(a), -ringR * Math.Cos(a), mr));
+            }
+            numberHoles.AddRange(QuarterNumbers(s, glyphs!, ringR, mr * 1.35, upright: true));
+            medallionRing = ringR;
+            medallionR = mr;
+        }
+        else if (placement == "medallions" && medallionRing > 0)
+        {
+            for (int q = 0; q < 4; q++)
+            {
+                double a = q * Math.PI / 2;
+                wood.Add(Circle(medallionRing * Math.Sin(a), -medallionRing * Math.Cos(a), medallionR + bar));
+            }
+        }
+        // A face: 12, 3, 6 and 9 near its edge and a dot at every other hour, all cut through
+        if (faceR > 0)
+        {
+            double size = Math.Clamp(faceR * 0.26, 8, 70);
+            numberHoles.AddRange(QuarterNumbers(s, glyphs!, faceR - size * 0.75, size, upright: true));
+            double dot = Math.Max(s.MinHoleMm * 1.3, faceR * 0.035);
+            for (int k = 0; k < 12; k++)
+            {
+                if (k % 3 == 0) continue;
+                double a = k * Math.PI / 6, r = faceR - size * 0.75;
+                numberHoles.Add(Circle(r * Math.Sin(a), -r * Math.Cos(a), dot / 2));
+            }
+        }
+
         wood = Clipper.Union(wood, FillRule.NonZero);
+        if (cuts.Count > 0) wood = Clipper.Difference(wood, cuts, FillRule.NonZero, Precision);
+        if (numberHoles.Count > 0) wood = Clipper.Difference(wood, numberHoles, FillRule.NonZero, Precision);
 
         // Holes too thin to cut cleanly are filled in: shrink the holes by half the minimum and grow them back,
         // which drops slivers and rounds sharp hole corners to a radius the laser can follow.
-        var disc = new PathsD { Circle(0, 0, R) };
+        var disc = round ? outline : new PathsD { Circle(0, 0, R) };
         var holes = Clipper.Difference(disc, wood, FillRule.NonZero, Precision);
         double m = Math.Max(0.1, s.MinHoleMm / 2);
         holes = Clipper.InflatePaths(holes, -m, JoinType.Round, EndType.Polygon, 2, Precision, ArcTol);
@@ -201,7 +314,9 @@ public static class Fretwork
 
         // Loose bits: anything not joined to the main piece would fall out
         var (main, loose) = Pieces(wood);
-        if (s.Loose == "bridge")
+        bool InNumber(PathsD piece) => numberHoles.Count > 0 && piece.Count > 0 &&
+            numberHoles.Any(h => Clipper.PointInPolygon(piece[0][0], h) == PointInPolygonResult.IsInside);
+        if (s.Loose == "bridge" || loose.Any(InNumber))
         {
             // A few rounds, since a bridged piece can be what the next one reaches
             double crumb = Math.Max(4 * s.MinHoleMm * s.MinHoleMm, 12);
@@ -210,8 +325,10 @@ public static class Fretwork
                 var extra = new PathsD();
                 foreach (var piece in loose)
                 {
-                    if (Math.Abs(Clipper.Area(piece)) < crumb) continue;
-                    if (BridgeToMain(piece, main, Math.Max(s.BridgeMm, bar * 0.6), R) is PathsD b) { extra.AddRange(b); bridges++; }
+                    if (s.Loose != "bridge" && !InNumber(piece)) continue;
+                    if (Math.Abs(Clipper.Area(piece)) < crumb && !InNumber(piece)) continue;
+                    double w = InNumber(piece) ? s.BridgeMm : Math.Max(s.BridgeMm, bar * 0.6);
+                    if (BridgeToMain(piece, main, w, R) is PathsD b) { extra.AddRange(b); bridges++; }
                 }
                 if (extra.Count == 0) break;
                 wood = Clipper.Union(wood, extra, FillRule.NonZero, Precision);
@@ -229,6 +346,7 @@ public static class Fretwork
         return new LaserResult
         {
             Material = wood, RadiusMm = R, CenterHoleMm = hole ? s.CenterHoleMm : 0, Backer = s.Backer,
+            MedallionRingMm = top ? medallionRing : 0, MedallionMm = top ? medallionR : 0,
             Holes = holeCount, Pieces = 1, LooseRemoved = removed, Bridges = bridges, CutLengthMm = cut,
         };
     }
@@ -374,6 +492,135 @@ public static class Fretwork
             wood.AddRange(shapes);
         }
         return (wood, bridges);
+    }
+
+    /// <summary>
+    /// 12, 3, 6 and 9 as shapes to cut out, centered on a circle of radius r, each about size tall. Thin strokes are
+    /// widened a little so every part of the number is a hole the laser can cut.
+    /// </summary>
+    private static PathsD QuarterNumbers(LaserSettings s, IReadOnlyDictionary<string, Glyph> glyphs, double r, double size, bool upright)
+    {
+        var texts = s.Numbers == "roman" ? QuarterRoman : Quarter;
+        var result = new PathsD();
+        for (int q = 0; q < 4; q++)
+        {
+            if (!glyphs.TryGetValue(texts[q], out var g) || g.Height <= 0) continue;
+            double a = q * Math.PI / 2, cx = r * Math.Sin(a), cy = -r * Math.Cos(a);
+            double scale = Math.Min(size * 0.62 / g.Height, size * 0.8 / Math.Max(1, g.Width));
+            double rot = upright ? 0 : a;
+            var shapes = new PathsD();
+            foreach (var line in Geom.PathData.ToPolylines(g.PathData, 0.5))
+            {
+                if (line.Count < 3) continue;
+                var path = new PathD(line.Count);
+                foreach (var p in line)
+                {
+                    double x = p.X * scale, y = p.Y * scale;
+                    path.Add(new PointD(cx + x * Math.Cos(rot) - y * Math.Sin(rot), cy + x * Math.Sin(rot) + y * Math.Cos(rot)));
+                }
+                shapes.Add(path);
+            }
+            shapes = Clipper.Union(shapes, FillRule.EvenOdd);
+            result.AddRange(Clipper.InflatePaths(shapes, s.MinHoleMm * 0.25, JoinType.Round, EndType.Polygon, 2, Precision, ArcTol));
+        }
+        return Clipper.Union(result, FillRule.NonZero);
+    }
+
+    /// <summary>
+    /// A botanical wreath between radius inner and outer: a vine with leaves sweeping clockwise (each with a cut vein),
+    /// tipped in and out so they touch the rings on both sides and hold the wreath in place, and sprigs of berries.
+    /// Returns solid shapes, lines (vine and stems) and the vein cuts.
+    /// </summary>
+    private static (PathsD Solids, List<(PathD, bool)> Lines, PathsD Cuts) Wreath(LaserSettings s, double inner, double outer, double bar)
+    {
+        var rng = new Random(s.Seed);
+        var solids = new PathsD();
+        var lines = new List<(PathD, bool)>();
+        var cuts = new PathsD();
+        double rv = (inner + outer) / 2, w = outer - inner;
+        double gap = Math.Max(s.MinHoleMm, bar * 0.35);
+        int count = Math.Max(8, (int)Math.Round(2 * Math.PI * rv / (w * 0.5)));
+        // Each new leaf is cut a thin gap clear of the leaves under it, so overlapping leaves keep their own outlines
+        var parts = new List<(PathsD Shape, RectD Box)>();
+        void AddSolid(PathD shape)
+        {
+            var box = Clipper.GetBounds(shape);
+            var clear = new RectD(box.left - gap, box.top - gap, box.right + gap, box.bottom + gap);
+            PathsD? cutter = null;
+            for (int i = 0; i < parts.Count; i++)
+            {
+                var b = parts[i].Box;
+                if (b.right < clear.left || b.left > clear.right || b.bottom < clear.top || b.top > clear.bottom) continue;
+                cutter ??= Clipper.InflatePaths(new PathsD { shape }, gap, JoinType.Round, EndType.Polygon, 2, Precision, ArcTol);
+                parts[i] = (Clipper.Difference(parts[i].Shape, cutter, FillRule.NonZero, Precision), b);
+            }
+            parts.Add((new PathsD { shape }, box));
+        }
+        for (int k = 0; k < count; k++)
+        {
+            double a = 2 * Math.PI * (k + rng.NextDouble() * 0.25) / count;
+            var at = new PointD(rv * Math.Sin(a), -rv * Math.Cos(a));
+            // A pair of leaves at each point on the vine, leaning along it (clockwise): one out toward the rim, one in toward the middle
+            foreach (bool outward in k % 2 == 0 ? new[] { true, false } : new[] { false, true })
+            {
+                double lean = (outward ? 1 : -1) * (0.5 + rng.NextDouble() * 0.3); // radians from the vine's direction
+                double dirA = a + Math.PI / 2 - lean;
+                var dir = new PointD(Math.Sin(dirA), -Math.Cos(dirA));
+                double radial = Math.Abs(dir.x * Math.Sin(a) - dir.y * Math.Cos(a));
+                // Every third point's leaves reach the rings beside them, which holds the wreath in place
+                double reach = (w / 2 + bar * 0.5) / Math.Max(0.35, radial);
+                double len = k % 3 == 0 ? reach : reach * (0.72 + rng.NextDouble() * 0.16);
+                len = Math.Min(len, w * 0.95);
+                double width = len * (0.32 + rng.NextDouble() * 0.07);
+                AddSolid(Leaf(at, dir, len, width));
+                // A vein down the middle, as a slim cut (wide enough to cut cleanly)
+                double vw = Math.Max(s.MinHoleMm * 1.15, width * 0.14);
+                if (width > vw * 3.2 && len > vw * 8)
+                {
+                    var v0 = new PointD(at.x + dir.x * len * 0.22, at.y + dir.y * len * 0.22);
+                    cuts.Add(Leaf(v0, dir, len * 0.6, vw));
+                }
+            }
+            // Every fourth point also gets a sprig of berries on a short stem
+            if (k % 4 == 1)
+            {
+                double ba = a + Math.PI / 2 + (k % 8 == 1 ? -1.2 : 1.2);
+                var bd = new PointD(Math.Sin(ba), -Math.Cos(ba));
+                double stem = w * 0.26, br = Math.Max(s.MinHoleMm, w * 0.045);
+                var tip = new PointD(at.x + bd.x * stem, at.y + bd.y * stem);
+                lines.Add((new PathD { at, tip }, false));
+                for (int b = 0; b < 3; b++)
+                {
+                    double off = (b - 1) * 0.9;
+                    var bp = new PointD(tip.x + (bd.x * Math.Cos(off) - bd.y * Math.Sin(off)) * br * 1.7, tip.y + (bd.x * Math.Sin(off) + bd.y * Math.Cos(off)) * br * 1.7);
+                    AddSolid(Circle(bp.x, bp.y, br));
+                }
+            }
+        }
+        // The vine goes over everything, joining all the leaves into one piece
+        lines.Add((Circle(0, 0, rv), true));
+        foreach (var part in parts) solids.AddRange(part.Shape);
+        return (Clipper.Union(solids, FillRule.NonZero), lines, Clipper.Union(cuts, FillRule.NonZero));
+    }
+
+    /// <summary>A leaf (two arcs meeting in points) from base along dir.</summary>
+    private static PathD Leaf(PointD baseP, PointD dir, double length, double width)
+    {
+        var p = new PathD();
+        var nrm = new PointD(-dir.y, dir.x);
+        const int steps = 24;
+        for (int i = 0; i <= steps; i++)
+        {
+            double t = (double)i / steps, off = Math.Sin(Math.PI * t) * width / 2 * (1 - 0.25 * t);
+            p.Add(new PointD(baseP.x + dir.x * length * t + nrm.x * off, baseP.y + dir.y * length * t + nrm.y * off));
+        }
+        for (int i = steps - 1; i > 0; i--)
+        {
+            double t = (double)i / steps, off = Math.Sin(Math.PI * t) * width / 2 * (1 - 0.25 * t);
+            p.Add(new PointD(baseP.x + dir.x * length * t - nrm.x * off, baseP.y + dir.y * length * t - nrm.y * off));
+        }
+        if (!Clipper.IsPositive(p)) p.Reverse();
+        return p;
     }
 
     /// <summary>A line from p straight away from (or toward) the center, ending at radius toR.</summary>
@@ -571,7 +818,7 @@ public static class Fretwork
         {
             var (x, y) = Spot(st.Layers.Count);
             sb.Append($"  <g id=\"backing-disc\" transform=\"translate({F(x)} {F(y)})\"><title>Backing disc (cut)</title>");
-            sb.Append($"<circle {cut} cx=\"0\" cy=\"0\" r=\"{F(R)}\"/>");
+            sb.Append($"<path {cut} d=\"{PathDataOf(BackerOutline(st))}\"/>");
             if (st.CenterHoleMm > 0) sb.Append($"<circle {cut} cx=\"0\" cy=\"0\" r=\"{F(st.CenterHoleMm / 2)}\"/>");
             sb.AppendLine("</g>");
         }
@@ -583,7 +830,8 @@ public static class Fretwork
     /// A picture of the finished piece. Layers are drawn bottom up, from light wood to dark, each with a soft shadow,
     /// so a stack looks 3D; the backing disc (if any) is the lightest, under everything.
     /// </summary>
-    public static string PreviewSvg(LaserStack st)
+    /// <param name="look">"alternate" (walnut and birch, like two-tone clocks) or "gradient" (dark on top to light below).</param>
+    public static string PreviewSvg(LaserStack st, string look = "gradient")
     {
         double R = st.RadiusMm;
         int n = st.Layers.Count;
@@ -597,13 +845,16 @@ public static class Fretwork
                 $"<feGaussianBlur in=\"SourceAlpha\" stdDeviation=\"{F(R * 0.006)}\"/><feOffset dx=\"{F(R * 0.004)}\" dy=\"{F(R * 0.008)}\" result=\"s\"/>" +
                 "<feComponentTransfer in=\"s\" result=\"s2\"><feFuncA type=\"linear\" slope=\"0.45\"/></feComponentTransfer>" +
                 "<feMerge><feMergeNode in=\"s2\"/><feMergeNode in=\"SourceGraphic\"/></feMerge></filter></defs>");
-        if (st.Backer) sb.AppendLine($"  <circle cx=\"0\" cy=\"0\" r=\"{F(R)}\" fill=\"#E3C495\"/>");
-        for (int i = n - 1; i >= 0; i--)
+        const string walnut = "#4E301D", birch = "#DDBF8F";
+        string Color(int i) => look == "alternate" ? (i % 2 == 0 ? walnut : birch) : Mix("#5B3A21", "#C99A62", n == 1 ? 0 : (double)i / (n - 1));
+        // The backing disc takes the bottom layer's outline (or a circle) in the other wood
+        if (st.Backer)
         {
-            // Top layer darkest, bottom lightest
-            double f = n == 1 ? 0 : (double)i / (n - 1);
-            sb.AppendLine($"  <path fill=\"{Mix("#5B3A21", "#C99A62", f)}\" fill-rule=\"evenodd\"{(shadows ? " filter=\"url(#lift)\"" : "")} d=\"{PathDataOf(st.Layers[i].Material)}\"/>");
+            string backColor = look == "alternate" ? (n % 2 == 0 ? walnut : birch) : "#E3C495";
+            sb.AppendLine($"  <path fill=\"{backColor}\"{(shadows ? " filter=\"url(#lift)\"" : "")} d=\"{PathDataOf(BackerOutline(st))}\"/>");
         }
+        for (int i = n - 1; i >= 0; i--)
+            sb.AppendLine($"  <path fill=\"{Color(i)}\" fill-rule=\"evenodd\"{(shadows ? " filter=\"url(#lift)\"" : "")} d=\"{PathDataOf(st.Layers[i].Material)}\"/>");
         if (st.CenterHoleMm > 0) sb.AppendLine($"  <circle cx=\"0\" cy=\"0\" r=\"{F(st.CenterHoleMm / 2)}\" fill=\"#222\"/>");
         sb.AppendLine("</svg>");
         return sb.ToString();
@@ -620,6 +871,9 @@ public static class Fretwork
         sb.AppendLine("</svg>");
         return sb.ToString();
     }
+
+    private static PathsD BackerOutline(LaserStack st) =>
+        st.BackerShape.Count > 0 ? st.BackerShape : new PathsD { Circle(0, 0, st.RadiusMm) };
 
     private static string Mix(string a, string b, double f)
     {
